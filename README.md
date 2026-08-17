@@ -14,3 +14,9 @@ Neither package does any cryptography directly — both defer to a real ACA-Py a
 Both packages have a matching `unsafeMode` (client) / `UNSAFE_MODE` (server) — default off — that skips the agent round-trip entirely for dev/test, exercising the real wire format without needing a live agent to sign or verify anything. Never enable it against real data; both sides log a loud warning when it's on.
 
 `digicred-crms`'s `services/catalog-graphql` is the concrete resource server built on `@digicred/did-graphql-server`.
+
+## Operation types: query, mutate, subscribe
+
+The workflow-action family this client serves is `graphql:query` / `graphql:mutate` / `graphql:subscribe`. `query` and `mutate` are both implemented today, sharing one code path on the consumer side (`companion-app`'s `executeGraphQLOperation`) — a GraphQL POST doesn't care whether the document says `query` or `mutation`, and this design's allowedAction-by-literal-query-string authorization matches either way with no change needed here.
+
+`subscribe` is a documented, deliberate placeholder — **not implemented**. Subscriptions need a persistent transport (WebSocket/SSE, e.g. `graphql-ws`), not a request/response POST, which means real design work on both sides before it can exist: does this client need subscription-transport support, and does a resource server need a pub/sub layer to serve one? Neither package here does anything toward that yet, and no template needs one. Build it when something actually needs it, not preemptively.
