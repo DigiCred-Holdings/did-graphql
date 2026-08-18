@@ -158,7 +158,15 @@ export class DidGraphQLClient {
     this.endpoint = options.endpoint
     this.capability = options.capability
     this.invokeCapability = options.invokeCapability
-    this.fetchImpl = options.fetchImpl ?? fetch
+    // fetch is spec'd to require its receiver be the global object
+    // (window/globalThis) — storing the bare function reference and
+    // calling it later as `this.fetchImpl(...)` invokes it with `this`
+    // bound to the DidGraphQLClient instance instead, which browsers
+    // reject outright: "'fetch' called on an object that does not
+    // implement interface Window." bind(globalThis) fixes the
+    // receiver without needing `window` specifically (also correct in
+    // Node/React Native, which have no `window`).
+    this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis)
     this.checkExpiryBeforeSend = options.checkExpiryBeforeSend ?? true
     this.timeoutMs = options.timeoutMs ?? 10_000
     this.unsafeMode = options.unsafeMode ?? false
