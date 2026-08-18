@@ -19,6 +19,7 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
+    "graphql": "^16.14.2",
     "pg": "^8.23.0"
   }
 }
