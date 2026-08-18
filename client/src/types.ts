@@ -60,7 +60,7 @@ export interface SignedInvocation {
  * delegation chain (leaf first; just `[capability]` when there's no
  * further sub-delegation) plus, for a real invocation, the signed
  * proof that the chain's leaf controller is exercising it right now.
- * `invocation` is absent for the dev-only `Auth { zcap }` diagnostic —
+ * `invocation` is absent for the dev-only `Auth { isZcapValid }` diagnostic —
  * that's a structural/expiry check on the chain alone, not a real
  * invocation (see `DidGraphQLClient.checkAuth`).
  */

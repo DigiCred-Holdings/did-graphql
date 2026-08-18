@@ -243,16 +243,19 @@ export class DidGraphQLClient {
   }
 
   /**
-   * Dev-only diagnostic (`query Auth { zcap }`) — reports whether the
-   * held capability is structurally valid and unexpired per the
-   * resource server. No invocation is signed for this — it's a
-   * structural/expiry check on the bare chain, not a real capability
-   * use. Not part of the production allowedAction surface; see the
-   * catalog-graphql-mock README.
+   * Dev-only diagnostic (`query Auth { isZcapValid }`) — reports
+   * whether the held capability is structurally valid and unexpired
+   * per the resource server. No invocation is signed for this — it's
+   * a structural/expiry check on the bare chain, not a real
+   * capability use. Not part of the production allowedAction surface;
+   * see the catalog-graphql-mock README. Field renamed from `zcap` to
+   * `isZcapValid` (boolean-prefix naming convention, see
+   * /learn/naming-design) — both catalog-graphql and
+   * catalog-graphql-mock's schemas were updated to match.
    */
   async checkAuth(): Promise<boolean> {
-    const prepared = prepareDiagnosticRequest(this.capability, { query: 'query Auth { zcap }' })
-    const result = await this.fetchJson<GraphQLResponse<{ zcap: boolean }>>(prepared, undefined)
-    return result.data?.zcap ?? false
+    const prepared = prepareDiagnosticRequest(this.capability, { query: 'query Auth { isZcapValid }' })
+    const result = await this.fetchJson<GraphQLResponse<{ isZcapValid: boolean }>>(prepared, undefined)
+    return result.data?.isZcapValid ?? false
   }
 }

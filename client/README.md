@@ -23,7 +23,7 @@ const result = await client.query({
 ### Checking capability validity
 
 ```ts
-const ok = await client.checkAuth() // query Auth { zcap } — dev/diagnostic only
+const ok = await client.checkAuth() // query Auth { isZcapValid } — dev/diagnostic only
 ```
 
 `isExpired(capability)` is also exported for a synchronous, no-network check (e.g. to decide whether to request a refresh before firing a real query).
