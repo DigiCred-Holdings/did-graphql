@@ -1,4 +1,4 @@
-# @digicred/did-graphql
+# @digicred/did-graphql-client
 
 A GraphQL client that authorizes every request with a [ZCAP](https://w3c-ccg.github.io/zcap-spec/) (W3C Authorization Capabilities) invocation header, instead of a bearer token or API key.
 
@@ -7,7 +7,7 @@ This is the shared client used by any DigiCred wallet-side surface (the `compani
 ## Usage
 
 ```ts
-import { DidGraphQLClient } from '@digicred/did-graphql'
+import { DidGraphQLClient } from '@digicred/did-graphql-client'
 
 const client = new DidGraphQLClient({
   endpoint: 'https://marketplace.utopia.sandbox.digicred.services/graphql',
