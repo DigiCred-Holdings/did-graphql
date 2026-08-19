@@ -72,6 +72,18 @@ async function readBody(req: http.IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
+// A browser-based caller (e.g. companion-app's GraphQL Workflow
+// Sandbox, running on its own dev-server origin) is a different
+// origin from this one — real CORS, not optional, same as
+// catalog-graphql's own server.ts. `*` is fine here: this is a local
+// sample app with a synthetic demo capability, not a deployment
+// guarding real data.
+const CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'content-type, x-zcap-invocation',
+}
+
 async function main() {
   // One agent for the whole process: signs the demo capability once
   // here at startup (if CONTROLLER_SEED is set), then verifies
@@ -96,6 +108,14 @@ async function main() {
   const zcapHeader = encodeInvocationHeader({ chain: [capability] })
 
   const server = http.createServer(async (req, res) => {
+    for (const [key, value] of Object.entries(CORS_HEADERS)) res.setHeader(key, value)
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
     if (req.method === 'GET' && req.url === '/graphql') {
       res.writeHead(200, { 'content-type': 'text/html' })
       res.end(renderGraphiQLPage({ headerValue: zcapHeader, defaultQuery: CASE_DEFAULT_QUERIES[0]! }))
