@@ -81,3 +81,7 @@ Integration tests under `test/` spin a Credo agent, create two `did:key` identit
 npm install
 npm test
 ```
+
+## Examples
+
+[`examples/case-manager`](examples/case-manager) — a standalone script demonstrating `CFItem.extensions` against a real live framework, and why this package stays generic about what's inside it. `npx tsx examples/case-manager/run.ts`, no server or credentials needed.
