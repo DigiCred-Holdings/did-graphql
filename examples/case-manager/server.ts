@@ -9,10 +9,13 @@
  * browse frameworks, item types, and items (with their extensions)
  * immediately, against any go-case server you point it at.
  *
- * Still unsafeMode — no wallet, no agent, no credentials needed to run
- * it. Real allowedAction gating still runs exactly as it would in
- * production; only the cryptographic signature/agent-verification step
- * is skipped (see the package README's `unsafeMode` section).
+ * Still unsafeMode against did-graphql-server's own gate — no live
+ * ACA-Py agent here for that. But when CONTROLLER_SEED is set, the
+ * capability's own Data Integrity proof IS really, cryptographically
+ * verified per request, locally, via Credo/Askar — see
+ * verifyRequestCapability.ts. That's a genuine extra check on top of
+ * (not a replacement for) did-graphql-server's own allowedAction
+ * gating, which keeps running exactly as configured either way.
  *
  * Config (all optional — defaults point at the real go-case sandbox
  * this repo has been developed against):
@@ -40,8 +43,10 @@ import {
   configureZcap,
   decodeInvocationHeader,
 } from '../../server/src/index.js'
+import { createTestAgent } from '../../test/helpers/credoAgent.js'
 import { buildDemoCapability } from './controllerCapability.js'
 import { renderGraphiQLPage } from './graphiql.js'
+import { verifyRequestCapability } from './verifyRequestCapability.js'
 
 const PORT = process.env['PORT'] ? Number(process.env['PORT']) : 4321
 const GRAPHQL_ENDPOINT = `http://localhost:${PORT}/graphql`
@@ -68,6 +73,14 @@ async function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 async function main() {
+  // One agent for the whole process: signs the demo capability once
+  // here at startup (if CONTROLLER_SEED is set), then verifies
+  // incoming capabilities' real signatures per request throughout the
+  // server's lifetime (verifyRequestCapability.ts) — no wallet
+  // persisted to disk, an in-memory Askar store is enough since
+  // CONTROLLER_SEED re-derives the same key deterministically anyway.
+  const agent = await createTestAgent()
+
   // Every one of the case module's own default queries — the module's
   // full case-management surface (cfDocuments/cfDocument/cfPackage/
   // cfItem/cfItemTypes/cfItems) is explorable immediately, not just one
@@ -75,7 +88,7 @@ async function main() {
   // rules: a query that's a field-SUBSET of any of these is also
   // allowed automatically — only a genuinely different root field, or
   // extra fields these don't already select, gets rejected.
-  const { capability, controllerDid } = await buildDemoCapability({
+  const { capability, controllerDid } = await buildDemoCapability(agent, {
     invocationTarget: GRAPHQL_ENDPOINT,
     allowedAction: CASE_DEFAULT_QUERIES,
     controllerSeed: process.env['CONTROLLER_SEED'],
@@ -104,6 +117,17 @@ async function main() {
     }
 
     const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'] as string | undefined)
+
+    // Real, local, additional check — did-graphql-server's own
+    // allowedAction/expiry gate below still runs regardless; this is
+    // the signature check unsafeMode alone never does.
+    const verification = await verifyRequestCapability(agent, payload)
+    if (!verification.ok) {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ errors: [{ message: verification.reason, extensions: { code: 'CAPABILITY_INVALID' } }], data: null }))
+      return
+    }
+
     const result = await graphql({
       schema,
       source: body.query,
@@ -120,14 +144,23 @@ async function main() {
     console.log(`CASE server: ${caseConfig.baseUrl}${caseConfig.apiKey ? ' (API key set)' : ''}`)
     console.log(
       controllerDid
-        ? `Controller: ${controllerDid} (real eddsa-jcs-2022-signed capability, derived from CONTROLLER_SEED)`
-        : 'Controller: did:example:demo (unsigned placeholder — set CONTROLLER_SEED for a real signed capability)',
+        ? `Controller: ${controllerDid} (real eddsa-jcs-2022-signed capability, derived from CONTROLLER_SEED — verified for real, per request, via Credo/Askar)`
+        : 'Controller: did:example:demo (unsigned placeholder — set CONTROLLER_SEED for a real signed + really-verified capability)',
     )
-    console.log('[UNSAFE_MODE] the server itself still skips agent verification (no live ACA-Py agent here) — see the package README before using this pattern anywhere real.\n')
+    console.log(
+      '[UNSAFE_MODE] did-graphql-server\'s own allowedAction/expiry gate still skips agent verification (no live ACA-Py agent here) — see the package README before using this pattern anywhere real.\n',
+    )
     console.log(
       `Open ${GRAPHQL_ENDPOINT} in a browser for a GraphiQL explorer — the x-zcap-invocation header and a default query are pre-filled, so it works immediately. Try cfDocuments first to see what frameworks exist on this server, then cfItemTypes/cfItems with a framework title you find there.`,
     )
   })
+
+  const shutdown = () => {
+    server.close()
+    void agent.shutdown().finally(() => process.exit(0))
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }
 
 main().catch((err) => {

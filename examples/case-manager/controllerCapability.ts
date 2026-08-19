@@ -5,14 +5,16 @@
 // storage to persist) or the placeholder unsigned shape
 // (CONTROLLER_SEED unset — today's zero-setup default).
 //
-// Either way the server itself still runs in unsafeMode: there's no
-// live ACA-Py agent here for it to verify a real signature against.
-// CONTROLLER_SEED only changes what the WIRE actually carries — a
-// genuine Data Integrity proof instead of `proof: { type: 'none' }` —
-// not what the server checks.
+// The `agent` here is the same one the server keeps running for the
+// whole process lifetime (see server.ts) — it's used once, at
+// startup, to sign this capability, and then again per-request to
+// really verify incoming ones (verifyRequestCapability.ts). One
+// shared agent, not a throwaway one created and shut down here.
+
+import type { Agent } from '@credo-ts/core'
 
 import type { Capability } from '../../client/src/types.js'
-import { createDidKeyFromSeed, createTestAgent } from '../../test/helpers/credoAgent.js'
+import { createDidKeyFromSeed } from '../../test/helpers/credoAgent.js'
 import { addDataIntegrityProof } from '../../test/helpers/eddsaJcs2022.js'
 
 export interface DemoCapabilityResult {
@@ -21,11 +23,14 @@ export interface DemoCapabilityResult {
   controllerDid?: string
 }
 
-export async function buildDemoCapability(opts: {
-  invocationTarget: string
-  allowedAction: string[]
-  controllerSeed?: string
-}): Promise<DemoCapabilityResult> {
+export async function buildDemoCapability(
+  agent: Agent,
+  opts: {
+    invocationTarget: string
+    allowedAction: string[]
+    controllerSeed?: string
+  },
+): Promise<DemoCapabilityResult> {
   const expires = new Date(Date.now() + 60 * 60 * 1000).toISOString()
 
   if (!opts.controllerSeed) {
@@ -41,22 +46,14 @@ export async function buildDemoCapability(opts: {
     }
   }
 
-  const agent = await createTestAgent()
-  try {
-    const controller = await createDidKeyFromSeed(agent, opts.controllerSeed)
-    const unsigned = {
-      id: `urn:zcap:case-manager-demo:${controller.did}`,
-      controller: controller.did,
-      invocationTarget: opts.invocationTarget,
-      allowedAction: opts.allowedAction,
-      expires,
-    }
-    const secured = await addDataIntegrityProof(agent, controller, unsigned, { proofPurpose: 'capabilityDelegation' })
-    return { capability: secured as unknown as Capability, controllerDid: controller.did }
-  } finally {
-    // Signing happens once at startup; the server itself never needs
-    // the agent again (the signed capability is just a fixed string
-    // baked into the GraphiQL page / printed curl commands from then on).
-    await agent.shutdown()
+  const controller = await createDidKeyFromSeed(agent, opts.controllerSeed)
+  const unsigned = {
+    id: `urn:zcap:case-manager-demo:${controller.did}`,
+    controller: controller.did,
+    invocationTarget: opts.invocationTarget,
+    allowedAction: opts.allowedAction,
+    expires,
   }
+  const secured = await addDataIntegrityProof(agent, controller, unsigned, { proofPurpose: 'capabilityDelegation' })
+  return { capability: secured as unknown as Capability, controllerDid: controller.did }
 }

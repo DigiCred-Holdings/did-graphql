@@ -59,10 +59,32 @@ reimplemented). The startup log prints the derived `did:key` so you
 can see it's real and reproducible — run it twice with the same seed
 and you'll get the identical DID both times.
 
-What this does **not** change: the server still runs `unsafeMode` —
-`allowedAction` gating still works exactly the same either way, but
-there's still no live agent here to actually verify that signature
-against. `CONTROLLER_SEED` changes what the *wire* carries (a real
-signed capability vs. the placeholder), not what the server checks.
-See the package README's `unsafeMode` section for what a real,
-agent-verified deployment (like `catalog-graphql`) does instead.
+### It's really verified, too
+
+The server doesn't just carry a real signature — it checks one. Every
+request runs `verifyRequestCapability` (`verifyRequestCapability.ts`)
+before touching GraphQL: if the presented capability has a real
+`DataIntegrityProof`, its signature is verified for real, using Credo
+(backed by Askar) directly — the public key comes straight from
+parsing the presented `did:key` string itself (self-certifying, no DID
+resolution network call), so this works for *any* did:key-signed
+capability, not just one this same process happens to hold. Tamper
+with the `proofValue` — flip one character — and the request is
+rejected with `CAPABILITY_INVALID`, same as a genuinely invalid
+signature would be anywhere else in this repo.
+
+This is a real, additional check layered on top of
+did-graphql-server's own `allowedAction`/expiry gate — not a
+replacement for it, and that gate still runs `unsafeMode` regardless
+(no live ACA-Py agent in this example, so it still can't check a
+signature *itself*). What's real production-grade verification
+through a tenant's actual ACA-Py agent looks like is
+`catalog-graphql`'s job, via `checkInvocation` — see the package
+README's `unsafeMode` section. What's here is: given only the DID on
+the wire, can a resource server verify a signature was genuinely
+produced by that DID's key, using nothing but Credo/Askar, no wallet,
+no network call? Yes — and this is what that looks like.
+
+When `CONTROLLER_SEED` is unset, the placeholder capability's
+`proof: { type: 'none' }` has nothing to verify, so this check is a
+no-op — same zero-setup default as before.

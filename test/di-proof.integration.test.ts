@@ -6,7 +6,7 @@ import { after, before, test } from 'node:test'
 import type { Agent } from '@credo-ts/core'
 
 import { createDidKey, createDidKeyFromSeed, createTestAgent, type DidKeyPair } from './helpers/credoAgent.js'
-import { addDataIntegrityProof, verifyDataIntegrityProof } from './helpers/eddsaJcs2022.js'
+import { addDataIntegrityProof, verifyDataIntegrityProof, verifyDataIntegrityProofByController } from './helpers/eddsaJcs2022.js'
 
 let agent: Agent
 let issuer: DidKeyPair
@@ -75,4 +75,41 @@ test('createDidKeyFromSeed identity signs a real, verifiable eddsa-jcs-2022 proo
   const proof = secured.proof as Record<string, unknown>
   assert.equal(proof.verificationMethod, seeded.verificationMethod)
   assert.equal(await verifyDataIntegrityProof(agent, seeded, secured), true)
+})
+
+// verifyDataIntegrityProofByController is what a resource server actually
+// needs: verifying a capability signed by someone else's key, using
+// only the did:key string presented on the wire — no pre-registered
+// signer, unlike verifyDataIntegrityProof above.
+test('verifyDataIntegrityProofByController verifies purely from the did:key in the proof, on a fresh agent with no prior knowledge of the signer', async () => {
+  const secured = await addDataIntegrityProof(agent, issuer, { capability: 'demo' }, { proofPurpose: 'capabilityDelegation' })
+
+  const verifierAgent = await createTestAgent() // never called createDidKey for `issuer` — nothing to look up locally
+  try {
+    assert.equal(await verifyDataIntegrityProofByController(verifierAgent, secured), true)
+  } finally {
+    await verifierAgent.shutdown()
+  }
+})
+
+test('verifyDataIntegrityProofByController rejects a tampered document', async () => {
+  const secured = await addDataIntegrityProof(agent, issuer, { capability: 'demo' }, { proofPurpose: 'capabilityDelegation' })
+  const tampered = { ...secured, capability: 'tampered' }
+  assert.equal(await verifyDataIntegrityProofByController(agent, tampered), false)
+})
+
+test('verifyDataIntegrityProofByController rejects a proof claiming a different controller than actually signed it', async () => {
+  const secured = await addDataIntegrityProof(agent, issuer, { capability: 'demo' }, { proofPurpose: 'capabilityDelegation' })
+  const proof = secured.proof as Record<string, unknown>
+  const relabeled = { ...secured, proof: { ...proof, verificationMethod: holder.verificationMethod } }
+  assert.equal(await verifyDataIntegrityProofByController(agent, relabeled), false)
+})
+
+test('verifyDataIntegrityProofByController rejects the unsigned placeholder shape', async () => {
+  const unsigned = {
+    id: 'urn:zcap:placeholder',
+    controller: 'did:example:demo',
+    proof: { type: 'none', verificationMethod: 'did:example:demo#unsafe' },
+  }
+  assert.equal(await verifyDataIntegrityProofByController(agent, unsigned), false)
 })
