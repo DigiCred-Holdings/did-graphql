@@ -5,7 +5,7 @@ import { after, before, test } from 'node:test'
 
 import type { Agent } from '@credo-ts/core'
 
-import { createDidKey, createTestAgent, type DidKeyPair } from './helpers/credoAgent.js'
+import { createDidKey, createDidKeyFromSeed, createTestAgent, type DidKeyPair } from './helpers/credoAgent.js'
 import { addDataIntegrityProof, verifyDataIntegrityProof } from './helpers/eddsaJcs2022.js'
 
 let agent: Agent
@@ -57,4 +57,22 @@ test('tampering the document invalidates the eddsa-jcs-2022 proof', async () => 
   const secured = await addDataIntegrityProof(agent, issuer, { n: 1 }, { proofPurpose: 'assertionMethod' })
   const tampered = { ...secured, n: 2 }
   assert.equal(await verifyDataIntegrityProof(agent, issuer, tampered), false)
+})
+
+test('createDidKeyFromSeed is deterministic — same seed always yields the same did:key', async () => {
+  const first = await createDidKeyFromSeed(agent, 'case-manager-test-seed')
+  const second = await createDidKeyFromSeed(agent, 'case-manager-test-seed')
+  assert.equal(first.did, second.did)
+  assert.equal(first.verificationMethod, second.verificationMethod)
+
+  const different = await createDidKeyFromSeed(agent, 'a-different-seed')
+  assert.notEqual(different.did, first.did)
+})
+
+test('createDidKeyFromSeed identity signs a real, verifiable eddsa-jcs-2022 proof', async () => {
+  const seeded = await createDidKeyFromSeed(agent, 'case-manager-test-seed')
+  const secured = await addDataIntegrityProof(agent, seeded, { hello: 'seeded' }, { proofPurpose: 'assertionMethod' })
+  const proof = secured.proof as Record<string, unknown>
+  assert.equal(proof.verificationMethod, seeded.verificationMethod)
+  assert.equal(await verifyDataIntegrityProof(agent, seeded, secured), true)
 })
