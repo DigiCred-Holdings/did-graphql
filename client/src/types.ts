@@ -74,7 +74,7 @@ export interface InvocationHeaderPayload {
  * chain's leaf controller's key (e.g. companion-app's own agent via
  * `POST /w3c-vc/zcaps/invoke`) and returns the signed result. This
  * package deliberately has no Ed25519/JCS implementation of its own;
- * see the did-graphql README for why.
+ * see the did-graphql-client README for why.
  */
 export type InvokeCapabilityFn = (
   capability: Capability,

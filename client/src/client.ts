@@ -174,7 +174,7 @@ export class DidGraphQLClient {
     if (this.unsafeMode) {
       // eslint-disable-next-line no-console
       console.warn(
-        '[did-graphql] unsafeMode is ON — queries send an unsigned capability chain, ' +
+        '[did-graphql-client] unsafeMode is ON — queries send an unsigned capability chain, ' +
           'no invocation is signed. Never enable this against production data.',
       )
     }

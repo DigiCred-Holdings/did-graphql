@@ -6,7 +6,7 @@ ZCAP-LD (W3C Authorization Capabilities) + GraphQL, for authorizing a receiver-s
 
 | Path | What |
 |------|------|
-| [`client/`](client/) | `@digicred/did-graphql` — the receiver-side client. Invokes capabilities; never signs them itself (see the package's own README for why). |
+| [`client/`](client/) | `@digicred/did-graphql-client` — the receiver-side client. Invokes capabilities; never signs them itself (see the package's own README for why). |
 | [`server/`](server/) | `@digicred/did-graphql-server` — resource-server-side invocation checking. Verifies capabilities; never holds signing/verification keys itself. |
 
 Neither package does any cryptography directly — both defer to a real ACA-Py agent's `w3c_vc` plugin (`plugins/w3c_vc` in `digicred-crms`) for every signature operation: the client calls whatever agent holds its own DID's key to sign an invocation (`POST /w3c-vc/zcaps/invoke`); the server calls the tenant's own agent to verify one (`POST /w3c-vc/zcaps/verify` / `.../invoke/verify`).
