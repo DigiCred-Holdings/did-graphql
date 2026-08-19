@@ -1,3 +1,6 @@
 export * from './agentClient.js'
 export * from './zcap.js'
+export * from './modules.js'
+export * from './auth.js'
+export * from './case/index.js'
 export * from './tenants.js'

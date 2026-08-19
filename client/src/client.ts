@@ -1,16 +1,16 @@
-import type {
-  Capability,
-  GraphQLRequest,
-  GraphQLResponse,
-  InvokeCapabilityFn,
-  SignedInvocation,
+import {
+  AUTH_QUERY,
+  type Capability,
+  type GraphQLRequest,
+  type GraphQLResponse,
+  type InvokeCapabilityFn,
+  type SignedInvocation,
 } from './types.js'
 import { encodeInvocationHeader, isExpired } from './zcap.js'
-import { validateCapabilityShape } from './validate.js'
+import { validateGraphqlZcap, type GraphqlZcapValidationOptions } from './validate.js'
 import {
   CapabilityExpiredError,
   GraphQLTransportError,
-  InsecureEndpointError,
   RequestTimeoutError,
 } from './errors.js'
 
@@ -61,15 +61,30 @@ export function prepareInvokedRequest(
 }
 
 export interface DidGraphQLClientOptions {
-  /** The GraphQL endpoint — `catalog.zcap.graphql.invocationTarget`. */
-  endpoint: string
+  /**
+   * GraphQL URL to POST. Defaults to `capability.invocationTarget`.
+   * If set, it MUST canonicalize to the same URL — this client will not
+   * send a ZCAP to a different host than the capability authorizes.
+   */
+  endpoint?: string
   /** The delegated capability to invoke (`artifacts.zcap.graphql`) — this package never signs, so no key material is ever passed here. */
   capability: Capability
   /**
-   * Signs a capabilityInvocation for `capability` — call whatever
-   * agent holds the capability controller's key (e.g. companion-app's
-   * own agent via `POST /w3c-vc/zcaps/invoke`). Required for `query()`;
-   * `checkAuth()` doesn't need it (no invocation, diagnostic only).
+   * Independent pin for `invocationTarget` — typically the workflow
+   * template's `catalog.zcap.graphql.invocationTarget`. If set, the
+   * capability MUST name this same GraphQL endpoint.
+   */
+  expectedInvocationTarget?: string
+  /**
+   * Hostname allowlist (`marketplace.example.com` or `*.digicred.services`).
+   * If set, `invocationTarget` MUST match an entry.
+   */
+  allowedHosts?: string[]
+  /**
+   * Signs a capabilityInvocation for `capability` — implemented by
+   * `digicred-wallet` (Bifold + Credo), which holds the capability
+   * controller's key. Required for `query()`; `checkAuth()` doesn't
+   * need it (no invocation, diagnostic only).
    */
   invokeCapability?: InvokeCapabilityFn
   /** Custom fetch implementation (defaults to the global `fetch`). */
@@ -104,17 +119,6 @@ export interface DidGraphQLClientOptions {
   unsafeMode?: boolean
 }
 
-function assertSecureEndpoint(endpoint: string, allowInsecure: boolean | undefined): void {
-  if (allowInsecure) return
-  let url: URL
-  try {
-    url = new URL(endpoint)
-  } catch {
-    throw new InsecureEndpointError(endpoint)
-  }
-  if (url.protocol !== 'https:') throw new InsecureEndpointError(endpoint)
-}
-
 /** AbortSignal that fires whichever of two signals aborts first (caller's + our own timeout). */
 function combineSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
   if (!a) return b
@@ -138,9 +142,9 @@ function combineSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefin
  * This package holds no signing keys and does no cryptography —
  * `invokeCapability` is always the caller's own agent, over whatever
  * transport it already uses (see README). Security defaults here are
- * everything that doesn't require a key: HTTPS-only endpoints,
- * structural capability validation, client-side expiry pre-flight,
- * and a bounded request timeout.
+ * everything that doesn't require a key: the GraphQL ZCAP validation
+ * algorithm (`validateGraphqlZcap`), HTTPS-only endpoints, expiry
+ * pre-flight, no redirect-following, and a bounded request timeout.
  */
 export class DidGraphQLClient {
   private endpoint: string
@@ -150,12 +154,22 @@ export class DidGraphQLClient {
   private checkExpiryBeforeSend: boolean
   private timeoutMs: number
   private unsafeMode: boolean
+  private zcapValidation: GraphqlZcapValidationOptions
 
   constructor(options: DidGraphQLClientOptions) {
-    assertSecureEndpoint(options.endpoint, options.allowInsecureEndpoint)
-    validateCapabilityShape(options.capability)
+    this.checkExpiryBeforeSend = options.checkExpiryBeforeSend ?? true
+    this.zcapValidation = {
+      allowInsecureEndpoint: options.allowInsecureEndpoint,
+      expectedInvocationTarget: options.expectedInvocationTarget,
+      allowedHosts: options.allowedHosts,
+      checkExpiry: this.checkExpiryBeforeSend,
+    }
+    const validated = validateGraphqlZcap(options.capability, {
+      ...this.zcapValidation,
+      fetchEndpoint: options.endpoint,
+    })
 
-    this.endpoint = options.endpoint
+    this.endpoint = validated.invocationTarget
     this.capability = options.capability
     this.invokeCapability = options.invokeCapability
     // fetch is spec'd to require its receiver be the global object
@@ -167,7 +181,6 @@ export class DidGraphQLClient {
     // receiver without needing `window` specifically (also correct in
     // Node/React Native, which have no `window`).
     this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis)
-    this.checkExpiryBeforeSend = options.checkExpiryBeforeSend ?? true
     this.timeoutMs = options.timeoutMs ?? 10_000
     this.unsafeMode = options.unsafeMode ?? false
 
@@ -182,8 +195,9 @@ export class DidGraphQLClient {
 
   /** Swap in a freshly re-delegated capability without building a new client. */
   setCapability(capability: Capability): void {
-    validateCapabilityShape(capability)
+    const validated = validateGraphqlZcap(capability, this.zcapValidation)
     this.capability = capability
+    this.endpoint = validated.invocationTarget
   }
 
   private async fetchJson<T>(prepared: PreparedRequest, signal: AbortSignal | undefined): Promise<T> {
@@ -198,7 +212,7 @@ export class DidGraphQLClient {
     }
 
     try {
-      const res = await this.fetchImpl(this.endpoint, { ...prepared, signal: combined })
+      const res = await this.fetchImpl(this.endpoint, { ...prepared, signal: combined, redirect: 'error' })
       if (!res.ok) throw new GraphQLTransportError(res.status, res.statusText)
       return (await res.json()) as T
     } catch (err) {
@@ -232,30 +246,32 @@ export class DidGraphQLClient {
       throw new Error(
         'DidGraphQLClient.query() requires invokeCapability — this package does not sign ' +
           'invocations itself; pass a function that calls whatever agent holds the capability ' +
-          "controller's key (e.g. POST /w3c-vc/zcaps/invoke). Or set unsafeMode: true for " +
+          "controller's key (digicred-wallet / Bifold+Credo). Or set unsafeMode: true for " +
           'dev/test use against a server configured to accept unsigned requests.',
       )
     }
 
-    const invocation = await this.invokeCapability(this.capability, request.query, this.endpoint)
+    const invocation = await this.invokeCapability(
+      this.capability,
+      request.query,
+      this.capability.invocationTarget,
+    )
     const prepared = prepareInvokedRequest(invocation, [this.capability], request)
     return this.fetchJson<GraphQLResponse<T>>(prepared, opts.signal)
   }
 
   /**
-   * Dev-only diagnostic (`query Auth { isZcapValid }`) — reports
+   * Dev-only diagnostic (`query Auth { zcap { valid } }`) — reports
    * whether the held capability is structurally valid and unexpired
    * per the resource server. No invocation is signed for this — it's
    * a structural/expiry check on the bare chain, not a real
-   * capability use. Not part of the production allowedAction surface;
-   * see the catalog-graphql-mock README. Field renamed from `zcap` to
-   * `isZcapValid` (boolean-prefix naming convention, see
-   * /learn/naming-design) — both catalog-graphql and
-   * catalog-graphql-mock's schemas were updated to match.
+   * capability use. Not part of the production allowedAction surface.
+   * Select more fields on `zcap` (controller, invocationTarget,
+   * allowedAction) via `query()` if you need the echo, not just valid.
    */
   async checkAuth(): Promise<boolean> {
-    const prepared = prepareDiagnosticRequest(this.capability, { query: 'query Auth { isZcapValid }' })
-    const result = await this.fetchJson<GraphQLResponse<{ isZcapValid: boolean }>>(prepared, undefined)
-    return result.data?.isZcapValid ?? false
+    const prepared = prepareDiagnosticRequest(this.capability, { query: AUTH_QUERY })
+    const result = await this.fetchJson<GraphQLResponse<{ zcap: { valid: boolean } }>>(prepared, undefined)
+    return result.data?.zcap?.valid ?? false
   }
 }

@@ -1,0 +1,22 @@
+{
+  "name": "did-graphql",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@credo-ts/askar": "0.6.3",
+    "@credo-ts/core": "0.6.3",
+    "@credo-ts/node": "0.6.3",
+    "@openwallet-foundation/askar-nodejs": "^0.4.3",
+    "@openwallet-foundation/askar-shared": "^0.4.3",
+    "@types/node": "^22.0.0",
+    "bs58": "^6.0.0",
+    "canonicalize": "^2.0.0",
+    "graphql": "^16.14.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
