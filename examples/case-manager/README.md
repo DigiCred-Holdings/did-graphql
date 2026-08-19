@@ -20,6 +20,22 @@ default query already filled in — try `cfDocuments` first to see what
 frameworks exist on the server, then `cfItemTypes`/`cfItems` with a
 framework title you find there.
 
+### Or with Docker
+
+Build **from the repo root**, not this directory — the example imports
+`client`/`server`/`test` as TS source via relative paths, so the build
+context needs all of them:
+
+```bash
+docker build -f examples/case-manager/Dockerfile -t case-manager .
+docker run --rm -p 4321:4321 case-manager
+docker run --rm -p 4321:4321 -e CONTROLLER_SEED=whatever-you-like case-manager
+```
+
+Uses `node:22-slim`, not `-alpine` — `@openwallet-foundation/askar-nodejs`
+ships a prebuilt native library dynamically linked against glibc
+(confirmed with `ldd`); Alpine's musl libc can't load it.
+
 ## Config
 
 All optional — every default points at the real go-case sandbox this
