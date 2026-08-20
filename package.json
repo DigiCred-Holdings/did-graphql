@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
     "test": "tsx --test test/*.test.ts"
   },
