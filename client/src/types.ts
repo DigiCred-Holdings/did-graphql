@@ -31,11 +31,9 @@ export interface Capability {
 }
 
 /**
- * A signed capabilityInvocation document — mirrors what digicred-crms's
- * real `w3c_vc/zcap/manager.py::create_invocation` (served over
- * `POST /w3c-vc/zcaps/invoke`) returns. This package never builds or
- * signs one itself — it's produced by whichever agent holds the
- * invoking DID's key, via the injected `invokeCapability` function.
+ * A signed capabilityInvocation document. This package never builds or
+ * signs one itself — `digicred-wallet` (Bifold + Credo) produces it via
+ * the injected `invokeCapability` function.
  */
 export interface InvocationProof {
   type: string
@@ -60,7 +58,7 @@ export interface SignedInvocation {
  * delegation chain (leaf first; just `[capability]` when there's no
  * further sub-delegation) plus, for a real invocation, the signed
  * proof that the chain's leaf controller is exercising it right now.
- * `invocation` is absent for the dev-only `Auth { isZcapValid }` diagnostic —
+ * `invocation` is absent for the dev-only `Auth { zcap { valid } }` diagnostic —
  * that's a structural/expiry check on the chain alone, not a real
  * invocation (see `DidGraphQLClient.checkAuth`).
  */
@@ -70,11 +68,10 @@ export interface InvocationHeaderPayload {
 }
 
 /**
- * Caller-supplied signing function — calls whatever agent holds the
- * chain's leaf controller's key (e.g. companion-app's own agent via
- * `POST /w3c-vc/zcaps/invoke`) and returns the signed result. This
- * package deliberately has no Ed25519/JCS implementation of its own;
- * see the did-graphql-client README for why.
+ * Caller-supplied signing function — implemented by `digicred-wallet`
+ * (Bifold + Credo), which holds the chain's leaf controller's key.
+ * This package deliberately has no Ed25519/JCS implementation of its
+ * own; see the did-graphql-client README for why.
  */
 export type InvokeCapabilityFn = (
   capability: Capability,
@@ -99,3 +96,12 @@ export interface GraphQLResponse<T = unknown> {
   data?: T
   errors?: GraphQLError[]
 }
+
+/**
+ * Dev diagnostic document (`DidGraphQLClient.checkAuth`). Not a
+ * production `allowedAction`. Extra `Zcap` fields (controller,
+ * invocationTarget, allowedAction, …) are optional selections on the
+ * same type.
+ */
+export const AUTH_QUERY = 'query Auth { zcap { valid } }'
+

@@ -8,7 +8,7 @@
 // deployment enabling it should treat that as a loud, deliberate
 // choice, never an accident (see the warning `configureZcap` emits).
 
-import { parse } from 'graphql'
+import { GraphQLError, parse } from 'graphql'
 import type { DocumentNode, OperationDefinitionNode, SelectionSetNode } from 'graphql'
 import type { AgentConfig, Capability } from './agentClient.js'
 import { mintRootCapability, verifyChain, verifyInvocation } from './agentClient.js'
@@ -201,21 +201,47 @@ function expiryProblem(cap: Capability, now: Date): string | null {
   return null
 }
 
+function presentZcap(leaf: Capability | undefined, valid: boolean, reason: string | null): PresentedZcap {
+  return {
+    valid,
+    reason,
+    id: leaf?.id ?? null,
+    controller: leaf?.controller ?? null,
+    invocationTarget: leaf?.invocationTarget ?? null,
+    allowedAction: leaf?.allowedAction ?? null,
+    expires: leaf?.expires ?? null,
+  }
+}
+
+/**
+ * GraphQL `Zcap` payload for `query Auth { zcap { valid } }`.
+ * Leaf fields are echoed even when `valid` is false.
+ */
+export interface PresentedZcap {
+  valid: boolean
+  reason: string | null
+  id: string | null
+  controller: string | null
+  invocationTarget: string | null
+  allowedAction: string[] | null
+  expires: string | null
+}
+
 function structuralCheckAuthOnly(
   payload: InvocationHeaderPayload | null,
   trust: TrustConfig,
-): { valid: boolean; reason: string | null } {
+): PresentedZcap {
   const leaf = payload?.chain?.[0]
   const problems = structuralProblems(leaf)
-  if (problems.length) return { valid: false, reason: problems.join('; ') }
+  if (problems.length) return presentZcap(leaf, false, problems.join('; '))
 
   const expiryIssue = expiryProblem(leaf!, new Date())
-  if (expiryIssue) return { valid: false, reason: expiryIssue }
+  if (expiryIssue) return presentZcap(leaf, false, expiryIssue)
 
   if (trust.expectedInvocationTarget && leaf!.invocationTarget !== trust.expectedInvocationTarget) {
-    return { valid: false, reason: `invocationTarget mismatch: ${leaf!.invocationTarget}` }
+    return presentZcap(leaf, false, `invocationTarget mismatch: ${leaf!.invocationTarget}`)
   }
-  return { valid: true, reason: null }
+  return presentZcap(leaf, true, null)
 }
 
 // --- real, agent-backed checks ---
@@ -238,15 +264,15 @@ async function reconstructFullChain(
   return [leaf, root]
 }
 
-/** Used by a `zcap` diagnostic query — chain validity only, no invocation required. */
+/** Used by `Query.zcap` (`query Auth { zcap { valid } }`) — chain validity only, no invocation required. */
 export async function checkAuthOnly(
   config: ZcapServerConfig,
   payload: InvocationHeaderPayload | null,
-): Promise<{ valid: boolean; reason: string | null }> {
+): Promise<PresentedZcap> {
   if (config.unsafeMode) return structuralCheckAuthOnly(payload, config.trust)
 
   const leaf = payload?.chain?.[0]
-  if (!leaf) return { valid: false, reason: 'missing capability' }
+  if (!leaf) return presentZcap(undefined, false, 'missing capability')
 
   const chain = await reconstructFullChain(config.agentConfig!, leaf, config.trust)
   const result = await verifyChain(config.agentConfig!, {
@@ -254,8 +280,8 @@ export async function checkAuthOnly(
     trustedRootController: config.trust.trustedRootController,
     expectedInvocationTarget: config.trust.expectedInvocationTarget,
   })
-  if (!result.verified) return { valid: false, reason: summarizeProblems(result.errors) }
-  return { valid: true, reason: null }
+  if (!result.verified) return presentZcap(leaf, false, summarizeProblems(result.errors))
+  return presentZcap(leaf, true, null)
 }
 
 export interface InvocationCheckResult {
@@ -302,4 +328,20 @@ export async function checkInvocation(
     return { ok: false, code: 'INVOCATION_INVALID', message: summarizeProblems(result.errors) }
   }
   return { ok: true }
+}
+
+/** Throw a GraphQL error when `checkInvocation` rejects. Used by CASE (and catalog) Query fields. */
+export async function requireAuthorizedQuery(
+  config: ZcapServerConfig,
+  payload: InvocationHeaderPayload | null,
+  rawQueryText: string,
+  fieldName: string,
+): Promise<void> {
+  const result = await checkInvocation(config, payload, rawQueryText)
+  if (!result.ok) {
+    throw new GraphQLError(result.message ?? 'unauthorized', {
+      extensions: { code: result.code },
+      path: [fieldName],
+    })
+  }
 }
