@@ -12,7 +12,15 @@ This page is the client API, the **GraphQL ZCAP validation algorithm** the walle
 npm install @digicred/did-graphql-client
 ```
 
-Until the package is published, consumers use a path dependency (`file:…/client`). Build before importing:
+Until the package is published, consumers use either a `file:…/client` path dependency (build first, same as below), or a git dependency pinned to this repo's `client` workspace — e.g. Yarn:
+
+```
+"@digicred/did-graphql-client": "git+https://github.com/DigiCred-Holdings/did-graphql.git#commit=<sha>&workspace=%40digicred%2Fdid-graphql-client"
+```
+
+That path relies on `client/package.json`'s `postinstall` script (`npm run build`) and on `files` listing `src`/`tsconfig.json` alongside `dist` — a git dependency fetch is packed using `files` *before* any script runs, so without the source in that list there'd be nothing for `postinstall` to build from.
+
+For a local `file:` dependency, build before importing instead:
 
 ```bash
 cd client && npm install && npm run build

@@ -7,14 +7,17 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "tsconfig.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsc -p tsconfig.json --watch"
+    "dev": "tsc -p tsconfig.json --watch",
+    "postinstall": "npm run build"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
   }
 }

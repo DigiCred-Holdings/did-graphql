@@ -12,7 +12,9 @@ See the [repo README](../README.md) for the product story. This page is the serv
 npm install @digicred/did-graphql-server
 ```
 
-Until published, catalog-graphql vendors this package (`file:./vendor/did-graphql-server`) or depends on `file:…/server`. Build first:
+Until published, catalog-graphql vendors this package (`file:./vendor/did-graphql-server`) or depends on `file:…/server`. A git dependency pinned to this repo's `server` workspace also works, the same way — see the client README's [Install](../client/README.md#install) for the `workspace=` syntax and why `files` lists `src`/`tsconfig.json` alongside `dist`.
+
+For a local `file:` dependency, build first:
 
 ```bash
 cd server && npm install && npm run build
