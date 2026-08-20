@@ -251,10 +251,16 @@ export class DidGraphQLClient {
       )
     }
 
+    // this.endpoint (not capability.invocationTarget) — it's the
+    // canonicalized form validateGraphqlZcap already resolved, and the
+    // one this.fetchImpl actually POSTs to just below. Signing the raw
+    // field here would let the invocation proof vouch for a textually
+    // different URL (mismatched case, trailing slash, explicit default
+    // port) than the one the request is actually sent to.
     const invocation = await this.invokeCapability(
       this.capability,
       request.query,
-      this.capability.invocationTarget,
+      this.endpoint,
     )
     const prepared = prepareInvokedRequest(invocation, [this.capability], request)
     return this.fetchJson<GraphQLResponse<T>>(prepared, opts.signal)

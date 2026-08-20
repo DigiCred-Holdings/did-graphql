@@ -108,6 +108,13 @@ function caseBaseUrl(config: CaseConfig): string {
   return `${config.baseUrl.replace(/\/$/, '')}/ims/case/v1p1`
 }
 
+// Every id/packageId this module interpolates into a URL path
+// (CFDocuments/{id}, CFItems/{id}, CFPackages/{id}) MUST go through
+// encodeURIComponent first — these values come straight from GraphQL
+// arguments, which ZCAP authorization gates by query *shape*, not by
+// the caller-supplied value of an ID variable. Without encoding, an id
+// containing "/" or "?" could redirect the request to a different
+// go-case path/query than the one this function name implies.
 async function fetchJson<T>(url: string, config: CaseConfig): Promise<T | null> {
   const res = await http(config)(url, { headers: authHeaders(config) })
   if (res.status === 404) return null
@@ -158,7 +165,7 @@ async function fetchCFPackage(config: CaseConfig, packageId: string): Promise<CF
   const cached = getCachedPackage(packageId)
   if (cached && Date.now() - cached.fetchedAt < ttl) return cached.package
 
-  const pkg = await fetchJson<CFPackage>(`${caseBaseUrl(config)}/CFPackages/${packageId}`, config)
+  const pkg = await fetchJson<CFPackage>(`${caseBaseUrl(config)}/CFPackages/${encodeURIComponent(packageId)}`, config)
   if (pkg) cachePackage(packageId, pkg)
   return pkg
 }
@@ -177,13 +184,13 @@ export async function getCFPackage(config: CaseConfig, packageId: string): Promi
 
 /** One framework's own metadata by id — GET /ims/case/v1p1/CFDocuments/{id}. */
 export async function getCFDocument(config: CaseConfig, id: string): Promise<CFDocument | null> {
-  const result = await fetchJson<{ CFDocument: CFDocument }>(`${caseBaseUrl(config)}/CFDocuments/${id}`, config)
+  const result = await fetchJson<{ CFDocument: CFDocument }>(`${caseBaseUrl(config)}/CFDocuments/${encodeURIComponent(id)}`, config)
   return result?.CFDocument ?? null
 }
 
 /** One CFItem by id, from any framework on the server — GET /ims/case/v1p1/CFItems/{id}. */
 export async function getCFItem(config: CaseConfig, id: string): Promise<CFItem | null> {
-  const result = await fetchJson<{ CFItem: CFItem }>(`${caseBaseUrl(config)}/CFItems/${id}`, config)
+  const result = await fetchJson<{ CFItem: CFItem }>(`${caseBaseUrl(config)}/CFItems/${encodeURIComponent(id)}`, config)
   return result?.CFItem ?? null
 }
 

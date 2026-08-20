@@ -11,7 +11,7 @@ import { InvalidCapabilityError } from '../client/src/errors.js'
 import { validateGraphqlZcap } from '../client/src/validate.js'
 import { createDidKey, createTestAgent, type DidKeyPair } from './helpers/credoAgent.js'
 import { verifyDataIntegrityProof } from './helpers/eddsaJcs2022.js'
-import { AUTH_QUERY, GRAPHQL_ENDPOINT, delegateGraphqlZcap } from './helpers/zcapFixtures.js'
+import { AUTH_QUERY, GRAPHQL_ENDPOINT, delegateGraphqlZcap, invokeGraphqlZcap } from './helpers/zcapFixtures.js'
 
 let agent: Agent
 let issuer: DidKeyPair
@@ -75,4 +75,36 @@ test('DidGraphQLClient.checkAuth sends an unsigned query Auth { zcap { valid } }
   assert.equal(payload.chain[0]?.id, capability.id)
   assert.equal(payload.invocation, undefined)
   assert.equal(JSON.parse(capturedBody ?? '{}').query, AUTH_QUERY)
+})
+
+test('query() signs the invocation for the same URL it actually fetches', async () => {
+  // Deliberately non-canonical (trailing slash): canonicalizeGraphqlUrl
+  // strips it, so this.endpoint (what fetchImpl receives) only matches
+  // capability.invocationTarget (the raw field) by coincidence if
+  // query() ever signs the raw field instead of the canonicalized one.
+  const nonCanonicalTarget = `${GRAPHQL_ENDPOINT}/`
+  const capability = await delegateGraphqlZcap(agent, issuer, holder, nonCanonicalTarget, [AUTH_QUERY])
+
+  let fetchedUrl: string | undefined
+  let signedTarget: string | undefined
+
+  const client = new DidGraphQLClient({
+    capability,
+    fetchImpl: (async (url) => {
+      fetchedUrl = String(url)
+      return new Response(JSON.stringify({ data: { zcap: { valid: true } } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch,
+    invokeCapability: async (cap, action, invocationTarget) => {
+      signedTarget = invocationTarget
+      return invokeGraphqlZcap(agent, holder, cap, action, invocationTarget)
+    },
+  })
+
+  await client.query({ query: AUTH_QUERY })
+
+  assert.equal(fetchedUrl, GRAPHQL_ENDPOINT)
+  assert.equal(signedTarget, fetchedUrl)
 })
