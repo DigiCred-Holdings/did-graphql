@@ -1,6 +1,6 @@
 import { GraphQLError } from 'graphql'
 
-import type { CaseConfig, CFItem } from './client.js'
+import type { CaseConfig, CFAssociation, CFItem } from './client.js'
 import { getCFDocuments, getCFPackage } from './client.js'
 
 // Every framework-scoped cfItems/cfItemTypes call that passes
@@ -100,4 +100,61 @@ export async function getCFItems(
   const start = opts.offset ?? 0
   const limit = Math.min(opts.limit ?? CF_ITEMS_DEFAULT_LIMIT, CF_ITEMS_MAX_LIMIT)
   return { items: matching.slice(start, start + limit), totalCount: matching.length }
+}
+
+export interface CFAssociationsResult {
+  items: CFAssociation[]
+  totalCount: number
+}
+
+const CF_ASSOCIATIONS_MAX_LIMIT = 200
+const CF_ASSOCIATIONS_DEFAULT_LIMIT = 50
+
+// Same in-memory-package-then-filter pattern as getCFItems above — go-case
+// itself has no server-side association filter, so this filters the
+// already-cached full package (see client.ts's packageCache) rather than
+// making a second round-trip. Some packages here are association-only
+// crosswalks with no CFItems at all and a very large CFAssociations array
+// (crosswalk-onet-requirements is 175k+) — filtering by originId/
+// destinationId before slicing keeps a caller's actual page small even
+// against those.
+export async function getCFAssociations(
+  config: CaseConfig,
+  opts: {
+    packageId?: string
+    framework?: string
+    originId?: string
+    destinationId?: string
+    associationType?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<CFAssociationsResult> {
+  const packageId = await resolvePackageId(config, opts)
+  const pkg = await getCFPackage(config, packageId)
+  if (!pkg) throw new GraphQLError(`CASE package "${packageId}" not found`, { extensions: { code: 'PACKAGE_NOT_FOUND' } })
+
+  let matching = pkg.CFAssociations
+  if (opts.originId) matching = matching.filter((a) => a.originNodeURI.identifier === opts.originId)
+  if (opts.destinationId) matching = matching.filter((a) => a.destinationNodeURI.identifier === opts.destinationId)
+  if (opts.associationType) matching = matching.filter((a) => a.associationType === opts.associationType)
+
+  const start = opts.offset ?? 0
+  const limit = Math.min(opts.limit ?? CF_ASSOCIATIONS_DEFAULT_LIMIT, CF_ASSOCIATIONS_MAX_LIMIT)
+  const page = matching.slice(start, start + limit)
+
+  // Tag each endpoint with the package it came from — a same-package
+  // hint for CFAssociationEndpoint.item's resolver, which uses it to
+  // look the item up in this same already-fetched package (a cache hit,
+  // since it's the package this very call just resolved) instead of a
+  // live per-row GET /CFItems/{id}. New objects, not a mutation of
+  // pkg.CFAssociations' own cached entries — those are shared across
+  // every call against this cached package, and this field is a
+  // read-time hint, not part of the CASE data itself.
+  const tagged = page.map((a) => ({
+    ...a,
+    originNodeURI: { ...a.originNodeURI, _packageId: packageId },
+    destinationNodeURI: { ...a.destinationNodeURI, _packageId: packageId },
+  }))
+  return { items: tagged, totalCount: matching.length }
 }

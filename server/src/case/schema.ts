@@ -76,6 +76,14 @@ export const CASE_TYPEDEFS = /* GraphQL */ `
     totalCount: Int!
   }
 
+  """Same shape as CFURIReference, plus a resolvable \`item\` field — the actual CFItem this endpoint of an association points at, fetched by identifier (works across frameworks, same as Query.cfItem). Lets a caller pull e.g. a program's own extensions (its area classification, its college) in the SAME cfAssociations call instead of a separate cfItem lookup per row."""
+  type CFAssociationEndpoint {
+    identifier: ID!
+    title: String
+    uri: String
+    item: CFItem
+  }
+
   """A single directed edge between two CFItems within a framework (e.g. isChildOf, isRelatedTo)."""
   type CFAssociation {
     identifier: ID!
@@ -83,8 +91,10 @@ export const CASE_TYPEDEFS = /* GraphQL */ `
     associationType: String!
     lastChangeDateTime: String
     CFDocumentURI: CFURIReference
-    originNodeURI: CFURIReference!
-    destinationNodeURI: CFURIReference!
+    originNodeURI: CFAssociationEndpoint!
+    destinationNodeURI: CFAssociationEndpoint!
+    """Free-form extension payload — e.g. importance/level scores on an O*NET occupation->skill requirement, or skillLevel on a SCED->skill link. Same free-form convention as CFItem.extensions."""
+    extensions: JSON
   }
 
   """A full CASE framework: metadata plus every item and association. go-case's /CFPackages/{id} has no pagination."""
@@ -92,6 +102,12 @@ export const CASE_TYPEDEFS = /* GraphQL */ `
     CFDocument: CFDocument!
     CFItems: [CFItem!]!
     CFAssociations: [CFAssociation!]!
+  }
+
+  type CFAssociationResults {
+    items: [CFAssociation!]!
+    """Total associations matching the given filters, before limit/offset slicing — see Query.cfAssociations."""
+    totalCount: Int!
   }
 `
 
@@ -108,13 +124,16 @@ export const CASE_QUERY_FIELDS = /* GraphQL */ `
     cfItemTypes(packageId: ID, framework: String): [CFItemTypeCount!]!
     """Every CFItem within one framework, paginated — unlike cfPackage this returns only items with real limit/offset slicing. itemType filters to one CFItemType (see cfItemTypes to discover which values exist first); totalCount reflects the filtered count, not the whole framework."""
     cfItems(packageId: ID, framework: String, itemType: String, limit: Int, offset: Int): CFItemResults!
+    """Associations within one framework, paginated and filterable — the graph-walking query: pass originId to find everything a CFItem points AT (e.g. an occupation's required skills), or destinationId to find everything that points TO it (e.g. which occupations require this skill). The other side of each returned association (originNodeURI/destinationNodeURI.identifier) is a valid cfItem(id) lookup, even across frameworks — associations routinely point at items in a different package (e.g. an O*NET occupation pointing at a Content Model element). associationType filters further (e.g. "isRelatedTo"); totalCount reflects the filtered count."""
+    cfAssociations(packageId: ID, framework: String, originId: ID, destinationId: ID, associationType: String, limit: Int, offset: Int): CFAssociationResults!
 `
 
 export const CASE_DEFAULT_QUERIES = [
   'query CFDocuments($limit: Int, $offset: Int) { cfDocuments(limit: $limit, offset: $offset) { items { identifier title description frameworkType publisher version } totalCount } }',
   'query CFDocument($id: ID!) { cfDocument(id: $id) { identifier uri title creator publisher description subject language version frameworkType caseVersion lastChangeDateTime } }',
-  'query CFPackage($id: ID!) { cfPackage(id: $id) { CFDocument { identifier title frameworkType } CFItems { identifier CFItemType fullStatement abbreviatedStatement } CFAssociations { identifier associationType originNodeURI { identifier title } destinationNodeURI { identifier title } } } }',
+  'query CFPackage($id: ID!) { cfPackage(id: $id) { CFDocument { identifier title frameworkType } CFItems { identifier CFItemType fullStatement abbreviatedStatement } CFAssociations { identifier associationType originNodeURI { identifier title } destinationNodeURI { identifier title } extensions } } }',
   'query CFItem($id: ID!) { cfItem(id: $id) { identifier uri CFItemType fullStatement abbreviatedStatement subject extensions } }',
   'query CFItemTypes($packageId: ID, $framework: String) { cfItemTypes(packageId: $packageId, framework: $framework) { itemType count } }',
   'query CFItems($packageId: ID, $framework: String, $itemType: String, $limit: Int, $offset: Int) { cfItems(packageId: $packageId, framework: $framework, itemType: $itemType, limit: $limit, offset: $offset) { items { identifier CFItemType fullStatement abbreviatedStatement } totalCount } }',
+  'query CFAssociations($packageId: ID, $framework: String, $originId: ID, $destinationId: ID, $associationType: String, $limit: Int, $offset: Int) { cfAssociations(packageId: $packageId, framework: $framework, originId: $originId, destinationId: $destinationId, associationType: $associationType, limit: $limit, offset: $offset) { items { identifier associationType originNodeURI { identifier title } destinationNodeURI { identifier title } extensions } totalCount } }',
 ]
