@@ -6,6 +6,18 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DigiCred-Holdings/did-graphql.git",
+    "directory": "server"
+  },
+  "homepage": "https://github.com/DigiCred-Holdings/did-graphql/tree/main/server#readme",
+  "bugs": {
+    "url": "https://github.com/DigiCred-Holdings/did-graphql/issues"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "files": [
     "dist",
     "src",
