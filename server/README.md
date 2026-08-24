@@ -1,4 +1,4 @@
-# @digicred/did-graphql-server
+# @digicred-holdings/did-graphql-server
 
 Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **through the tenant's ACA-Py agent**. This package holds no signing or verification keys. Holder signing is `digicred-wallet` (Bifold + Credo), not this package.
 
@@ -9,7 +9,7 @@ See the [repo README](../README.md) for the product story. This page is the serv
 ## Install
 
 ```bash
-npm install @digicred/did-graphql-server
+npm install @digicred-holdings/did-graphql-server
 ```
 
 Until published, catalog-graphql vendors this package (`file:./vendor/did-graphql-server`) or depends on `file:…/server`. A git dependency pinned to this repo's `server` workspace also works, the same way — see the client README's [Install](../client/README.md#install) for the `workspace=` syntax and why `files` lists `src`/`tsconfig.json` alongside `dist`.
@@ -30,7 +30,7 @@ import {
   decodeInvocationHeader,
   checkAuthOnly,
   checkInvocation,
-} from '@digicred/did-graphql-server'
+} from '@digicred-holdings/did-graphql-server'
 
 const zcapConfig = configureZcap({
   trust: {
@@ -66,7 +66,7 @@ if (!gate.ok) {
 - **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) gated by `checkInvocation`. College/Program mapping stays in catalog-graphql. Full field/query reference: [src/case/README.md](src/case/README.md).
 
 ```ts
-import { authModule, caseModule, composeModules, attachResolvers } from '@digicred/did-graphql-server'
+import { authModule, caseModule, composeModules, attachResolvers } from '@digicred-holdings/did-graphql-server'
 
 const composed = composeModules([authModule, caseModule()])
 const schema = buildSchema(`${catalogTypeDefs}\n${composed.sdl}`) // or splice queryFields into your Query
@@ -93,7 +93,7 @@ GraphiQL `defaultQuery` is `authModule.defaultQueries[0]` (`AUTH_QUERY`).
 One deployment, many CRMS tenants. Looks up `tenants` in the **same Postgres** crms-ui uses, decrypts `traction_tenant_api_key` (AES-256-GCM `enc:v1:…`, `ENCRYPTION_KEY`), fetches a Traction token, and returns a ready `ZcapServerConfig`.
 
 ```ts
-import { TenantResolver } from '@digicred/did-graphql-server'
+import { TenantResolver } from '@digicred-holdings/did-graphql-server'
 
 const tenants = new TenantResolver({
   connectionString: process.env.DATABASE_URL!,

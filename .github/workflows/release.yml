@@ -24,7 +24,7 @@ jobs:
           node-version: '20.19.2'
           cache: 'npm'
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@digicred'
+          scope: '@digicred-holdings'
 
       - run: npm ci
 

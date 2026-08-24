@@ -1,4 +1,4 @@
-# @digicred/did-graphql-client
+# @digicred-holdings/did-graphql-client
 
 Wallet-side GraphQL client. It attaches a ZCAP invocation to every request as `x-zcap-invocation` and POSTs JSON to a GraphQL endpoint. It never holds keys and never signs — `invokeCapability` is injected by the caller (`digicred-wallet` / Bifold+Credo, or companion-app talking to that same wallet stack).
 
@@ -9,13 +9,13 @@ This page is the client API, the **GraphQL ZCAP validation algorithm** the walle
 ## Install
 
 ```bash
-npm install @digicred/did-graphql-client
+npm install @digicred-holdings/did-graphql-client
 ```
 
 Until the package is published, consumers use either a `file:…/client` path dependency (build first, same as below), or a git dependency pinned to this repo's `client` workspace — e.g. Yarn:
 
 ```
-"@digicred/did-graphql-client": "git+https://github.com/DigiCred-Holdings/did-graphql.git#commit=<sha>&workspace=%40digicred%2Fdid-graphql-client"
+"@digicred-holdings/did-graphql-client": "git+https://github.com/DigiCred-Holdings/did-graphql.git#commit=<sha>&workspace=%40digicred%2Fdid-graphql-client"
 ```
 
 That path relies on `client/package.json`'s `postinstall` script (`npm run build`) and on `files` listing `src`/`tsconfig.json` alongside `dist` — a git dependency fetch is packed using `files` *before* any script runs, so without the source in that list there'd be nothing for `postinstall` to build from.
@@ -29,7 +29,7 @@ cd client && npm install && npm run build
 ## Usage
 
 ```ts
-import { DidGraphQLClient } from '@digicred/did-graphql-client'
+import { DidGraphQLClient } from '@digicred-holdings/did-graphql-client'
 
 const client = new DidGraphQLClient({
   capability: artifacts.zcap.graphql,
@@ -97,7 +97,7 @@ On success, the client POSTs **only** to the canonical `invocationTarget`. Fetch
 Contacts send `invocationTarget` over DIDComm; the wallet will not have a global host list. That is the intended path. `allowedHosts` is optional app policy. `expectedInvocationTarget` is a same-connection pin (template vs capability), not a pre-provisioned allowlist. Call without `allowedHosts`, keep the algorithm’s HTTPS / private-IP / same-URL rules, and treat `result.data` as untrusted JSON from that peer.
 
 ```ts
-import { validateGraphqlZcap } from '@digicred/did-graphql-client'
+import { validateGraphqlZcap } from '@digicred-holdings/did-graphql-client'
 
 validateGraphqlZcap(artifacts.zcap.graphql, {
   expectedInvocationTarget: template.catalog.zcap.graphql.invocationTarget,
