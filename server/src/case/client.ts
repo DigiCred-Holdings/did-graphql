@@ -154,13 +154,14 @@ async function fetchJson<T>(url: string, config: CaseConfig): Promise<T | null> 
 // eviction (deleting Map's current first key) always drops the
 // least-recently-touched package first.
 const PACKAGE_CACHE_MAX_ENTRIES = 12
-const packageCache = new Map<string, { package: CFPackage; fetchedAt: number }>()
+type PackageCacheEntry = { package: CFPackage; fetchedAt: number; etag?: string }
+const packageCache = new Map<string, PackageCacheEntry>()
 
 export function clearCasePackageCache(): void {
   packageCache.clear()
 }
 
-function getCachedPackage(packageId: string): { package: CFPackage; fetchedAt: number } | undefined {
+function getCachedPackage(packageId: string): PackageCacheEntry | undefined {
   const hit = packageCache.get(packageId)
   if (hit) {
     packageCache.delete(packageId)
@@ -184,9 +185,14 @@ export function isPackageCached(config: CaseConfig, packageId: string): boolean 
   return !!hit && Date.now() - hit.fetchedAt < ttl
 }
 
-function cachePackage(packageId: string, pkg: CFPackage): void {
+function cachePackage(packageId: string, pkg: CFPackage, etag?: string): void {
+  const prev = packageCache.get(packageId)
   packageCache.delete(packageId)
-  packageCache.set(packageId, { package: pkg, fetchedAt: Date.now() })
+  packageCache.set(packageId, {
+    package: pkg,
+    fetchedAt: Date.now(),
+    etag: etag ?? prev?.etag,
+  })
   if (packageCache.size > PACKAGE_CACHE_MAX_ENTRIES) {
     const oldest = packageCache.keys().next().value
     if (oldest !== undefined) packageCache.delete(oldest)
@@ -198,8 +204,28 @@ async function fetchCFPackage(config: CaseConfig, packageId: string): Promise<CF
   const cached = getCachedPackage(packageId)
   if (cached && Date.now() - cached.fetchedAt < ttl) return cached.package
 
-  const pkg = await fetchJson<CFPackage>(`${caseBaseUrl(config)}/CFPackages/${encodeURIComponent(packageId)}`, config)
-  if (pkg) cachePackage(packageId, pkg)
+  const url = `${caseBaseUrl(config)}/CFPackages/${encodeURIComponent(packageId)}`
+  const headers: Record<string, string> = { ...authHeaders(config) }
+  // Only send If-None-Match when a prior response gave us an ETag — servers
+  // without ETag support never populate this and keep getting plain GETs.
+  if (cached?.etag) headers['if-none-match'] = cached.etag
+
+  const res = await http(config)(url, { headers })
+  if (res.status === 404) return null
+  if (res.status === 304) {
+    if (!cached) {
+      throw new Error('go-case returned 304 Not Modified without a cached CFPackage entry')
+    }
+    cachePackage(packageId, cached.package, cached.etag)
+    return cached.package
+  }
+  if (!res.ok) {
+    throw new Error(`go-case request failed: ${res.status} ${await res.text().catch(() => '')}`)
+  }
+
+  const pkg = (await res.json()) as CFPackage
+  const etag = res.headers.get('etag') ?? undefined
+  cachePackage(packageId, pkg, etag)
   return pkg
 }
 

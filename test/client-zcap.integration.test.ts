@@ -54,13 +54,14 @@ test('DidGraphQLClient.checkAuth sends an unsigned query Auth { zcap { valid } }
   let capturedHeader: string | undefined
   let capturedBody: string | undefined
 
+  let capturedAcceptEncoding: string | undefined
   const client = new DidGraphQLClient({
     capability,
     expectedInvocationTarget: GRAPHQL_ENDPOINT,
     fetchImpl: (async (_url, init) => {
-      capturedHeader = (init as RequestInit).headers
-        ? ((init as RequestInit).headers as Record<string, string>)['x-zcap-invocation']
-        : undefined
+      const headers = (init as RequestInit).headers as Record<string, string> | undefined
+      capturedHeader = headers?.['x-zcap-invocation']
+      capturedAcceptEncoding = headers?.['accept-encoding']
       capturedBody = typeof (init as RequestInit).body === 'string' ? ((init as RequestInit).body as string) : undefined
       return new Response(JSON.stringify({ data: { zcap: { valid: true } } }), {
         status: 200,
@@ -75,6 +76,25 @@ test('DidGraphQLClient.checkAuth sends an unsigned query Auth { zcap { valid } }
   assert.equal(payload.chain[0]?.id, capability.id)
   assert.equal(payload.invocation, undefined)
   assert.equal(JSON.parse(capturedBody ?? '{}').query, AUTH_QUERY)
+  assert.equal(capturedAcceptEncoding, 'gzip')
+})
+
+test('checkAuth() inflates a gzip GraphQL body (React Native / undici-with-header shape)', async () => {
+  const { gzipSync } = await import('node:zlib')
+  const capability = await delegateGraphqlZcap(agent, issuer, holder)
+  const gz = gzipSync(Buffer.from(JSON.stringify({ data: { zcap: { valid: true } } })))
+
+  const client = new DidGraphQLClient({
+    capability,
+    expectedInvocationTarget: GRAPHQL_ENDPOINT,
+    fetchImpl: (async () =>
+      new Response(gz, {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip' },
+      })) as typeof fetch,
+  })
+
+  assert.equal(await client.checkAuth(), true)
 })
 
 test('query() signs the invocation for the same URL it actually fetches', async () => {

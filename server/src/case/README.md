@@ -80,6 +80,8 @@ Same shape `checkInvocation`/`requireAuthorizedQuery` use elsewhere in this pack
 
 `clearCasePackageCache()` drops every cached package immediately; `clearFrameworkPackageIdCache()` drops every cached title→packageId resolution. Tests call both between cases so a mutated mock response, or a re-registered framework title, doesn't leak into the next assertion.
 
+When go-case (or another CASE server) returns an `ETag` on `GET /CFPackages/{id}`, the client stores it alongside the cached package. After the TTL expires, the next fetch sends `If-None-Match` with that stored ETag; a `304 Not Modified` reuses the cached body without re-downloading the full package (~13MB for Wyoming Higher Education). Servers that never send `ETag` behave exactly as before — no conditional header is sent, and every post-TTL fetch is a plain GET.
+
 There is no cross-process cache for either — each server instance holds its own in memory. A multi-instance deployment fetches each package/title once per instance, not once total.
 
 ## Pagination limits

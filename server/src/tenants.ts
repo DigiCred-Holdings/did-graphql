@@ -15,11 +15,9 @@
 //   - hostname lookup order: exact hostname -> host-without-port ->
 //     localhost/127.0.0.1 swap (TenantsService.findByHostname,
 //     services/crms-ui/src/tenants/tenants.service.ts:162-185)
-//   - Traction Bearer token acquisition (TractionService.fetchToken,
-//     services/crms-ui/src/traction/traction.service.ts:7-56):
-//     POST {tractionUrl}/multitenancy/tenant/{tractionTenantId}/token
-//     body {api_key: tractionTenantApiKey}, retrying {wallet_key: ...}
-//     on 401 — same two-shape probe, same field name variance.
+//   - Traction Bearer token acquisition (TractionService.fetchToken, …)
+//     — only when public_did is not did:key. did:key tenants verify locally
+//     and never fetch a token.
 //   - tractionTenantApiKey decryption (EncryptionService,
 //     services/crms-ui/src/encryption/encryption.service.ts):
 //     AES-256-GCM, key = sha256(ENCRYPTION_KEY), format
@@ -120,19 +118,27 @@ export class TenantResolver {
 
   /**
    * Resolves a ready-to-use ZcapServerConfig for the tenant matching
-   * `hostname` — a fresh Traction token is fetched per call (no
-   * caching, matching crms-ui's own sessionless call sites for
-   * cross-service use, e.g. vc-login.service.ts) — returns null if no
-   * tenant matches, or is missing the fields needed
-   * (traction_url/traction_tenant_id/traction_tenant_api_key/public_did).
+   * `hostname`. `did:key` public DIDs verify locally — no Traction
+   * token is fetched. Other DID methods still POST for a Bearer token
+   * so `checkInvocation` can fall through to the tenant agent.
    */
   async resolveZcapConfig(
     hostname: string,
     opts: { expectedInvocationTarget?: string } = {},
   ): Promise<ZcapServerConfig | null> {
     const row = await this.findRowByHostname(hostname)
-    if (!row) return null
-    if (!row.traction_url || !row.traction_tenant_id || !row.traction_tenant_api_key || !row.public_did) {
+    if (!row?.public_did) return null
+
+    const trust = {
+      trustedRootController: row.public_did,
+      expectedInvocationTarget: opts.expectedInvocationTarget,
+    }
+
+    if (row.public_did.startsWith('did:key:')) {
+      return { trust }
+    }
+
+    if (!row.traction_url || !row.traction_tenant_id || !row.traction_tenant_api_key) {
       return null
     }
 
@@ -141,10 +147,7 @@ export class TenantResolver {
 
     return {
       agentConfig: { baseUrl: row.traction_url, token },
-      trust: {
-        trustedRootController: row.public_did,
-        expectedInvocationTarget: opts.expectedInvocationTarget,
-      },
+      trust,
     }
   }
 

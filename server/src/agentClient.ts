@@ -1,9 +1,9 @@
-// Calls the tenant's own ACA-Py agent for everything cryptographic —
-// this service holds no signing/verification keys and implements no
-// Data Integrity cryptosuite itself. See w3c_vc/routes.py for the
-// real route implementations these wrap (zcaps/root, zcaps/verify,
-// zcaps/invoke/verify) — all genuinely wired to ZcapManager, not
-// stubs.
+// Calls the tenant's own ACA-Py agent when a DID on the chain is not
+// did:key. Local verify (localVerify.ts) handles did:key + eddsa-jcs-2022
+// without these routes. See w3c_vc/routes.py for the real implementations
+// these wrap (zcaps/verify, zcaps/invoke/verify). Minting a root is not
+// on the query path — reconstructFullChain / materializeRoot does that
+// in-process.
 
 export interface AgentConfig {
   baseUrl: string

@@ -1,6 +1,6 @@
 # @digicred-holdings/did-graphql-server
 
-Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **through the tenant's ACA-Py agent**. This package holds no signing or verification keys. Holder signing is `digicred-wallet` (Bifold + Credo), not this package.
+Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation. **`did:key` is verified locally** (the public key is in the DID). Other DID methods fall through to the tenant's ACA-Py agent. This package holds no signing keys. Holder signing is `digicred-wallet` (Bifold + Credo), not this package.
 
 See the [repo README](../README.md) for the product story. This page is the server API, attenuation rules, and the optimizations that are already in place.
 
@@ -20,7 +20,7 @@ For a local `file:` dependency, build first:
 cd server && npm install && npm run build
 ```
 
-Node-only. Depends on `graphql` (query parse / field-subset) and `pg` (optional `TenantResolver`).
+Node-only. Depends on `graphql` (query parse / field-subset), `canonicalize` + `bs58` (local `did:key` / eddsa-jcs-2022 verify), and `pg` (optional `TenantResolver`).
 
 ## Usage
 
@@ -37,11 +37,7 @@ const zcapConfig = configureZcap({
     trustedRootController: tenant.publicDid,       // capability controller DID
     expectedInvocationTarget: 'https://…/graphql', // optional pin
   },
-  agentConfig: {
-    baseUrl: tenant.tractionUrl,  // ACA-Py admin
-    token: tractionBearerToken,
-    apiKey: process.env.ACAPY_API_KEY, // optional x-api-key
-  },
+  // agentConfig is only required when a DID on the chain is not did:key.
 })
 
 const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'])
@@ -56,7 +52,7 @@ if (!gate.ok) {
 }
 ```
 
-`configureZcap()` is required at startup (or whenever you build a config): it refuses a missing `agentConfig` unless `unsafeMode` is on, and logs a warning if unsafe mode is on.
+`configureZcap()` is required at startup (or whenever you build a config). It logs a warning if `unsafeMode` is on. `agentConfig` is optional: omit it when issuer and holder are `did:key`.
 
 ## GraphQL modules
 
@@ -83,14 +79,14 @@ GraphiQL `defaultQuery` is `authModule.defaultQueries[0]` (`AUTH_QUERY`).
 |-------|----------|----------------|
 | `trust.trustedRootController` | yes | Tenant public DID. Root of the delegation chain. |
 | `trust.expectedInvocationTarget` | no | If set, the leaf `invocationTarget` must equal this URL. |
-| `agentConfig.baseUrl` | unless unsafe | Traction / ACA-Py base URL. |
-| `agentConfig.token` | unless unsafe | Bearer token for the tenant wallet. |
+| `agentConfig.baseUrl` | only if not did:key | Traction / ACA-Py base URL. Unused on the local did:key path. |
+| `agentConfig.token` | only if not did:key | Bearer token for the tenant wallet. |
 | `agentConfig.apiKey` | no | Extra `x-api-key` header some agents expect. |
-| `unsafeMode` | default `false` | Skip all agent crypto. Structural shape + expiry + `allowedAction` only. |
+| `unsafeMode` | default `false` | Skip all signature checks. Structural shape + expiry + `allowedAction` only. |
 
 ### Multi-tenant: `TenantResolver`
 
-One deployment, many CRMS tenants. Looks up `tenants` in the **same Postgres** crms-ui uses, decrypts `traction_tenant_api_key` (AES-256-GCM `enc:v1:…`, `ENCRYPTION_KEY`), fetches a Traction token, and returns a ready `ZcapServerConfig`.
+One deployment, many CRMS tenants. Looks up `tenants` in the **same Postgres** crms-ui uses. For a `did:key` `public_did` it returns trust config only — no Traction token. For other DID methods it decrypts `traction_tenant_api_key` (AES-256-GCM `enc:v1:…`, `ENCRYPTION_KEY`), fetches a Traction token, and returns `agentConfig` so verification can fall through to the tenant agent.
 
 ```ts
 import { TenantResolver } from '@digicred-holdings/did-graphql-server'
@@ -116,9 +112,9 @@ Call `tenants.close()` on shutdown to drain the `pg` pool.
 `checkInvocation` in order:
 
 1. Leaf present.
-2. Chain valid — `POST /w3c-vc/zcaps/root` to reconstruct the unsigned root, then `POST /w3c-vc/zcaps/verify`. The wallet never sends the root.
+2. Chain valid — the unsigned root is **materialized locally** (`urn:zcap:root:` + controller + target). The wallet never sends the root. `did:key` proofs are checked with eddsa-jcs-2022 in this process. Other DID methods `POST /w3c-vc/zcaps/verify`.
 3. `allowedAction` membership (see below).
-4. Signed invocation — `POST /w3c-vc/zcaps/invoke/verify`.
+4. Signed invocation — local eddsa-jcs-2022 for `did:key`, otherwise `POST /w3c-vc/zcaps/invoke/verify`.
 
 `checkAuthOnly` stops after step 2 (unsafe mode: structural + expiry + optional target pin).
 
@@ -135,15 +131,18 @@ Inline fragments (`... on College`) are walked (needed for `node`). Aliased dupl
 
 ## Agent calls
 
+Used only when a DID on the chain is **not** `did:key`. The unsigned root is always built in-process (`materializeRoot`); `POST /w3c-vc/zcaps/root` is not on the query path.
+
 | When | Route |
 |------|--------|
-| Reconstruct root | `POST /w3c-vc/zcaps/root` |
-| Diagnostic / chain | `POST /w3c-vc/zcaps/verify` |
-| Real query | `POST /w3c-vc/zcaps/invoke/verify` |
+| Diagnostic / chain (non-did:key) | `POST /w3c-vc/zcaps/verify` |
+| Real query (non-did:key) | `POST /w3c-vc/zcaps/invoke/verify` |
 
-All go through `agentClient.ts`. Crypto is Data Integrity `eddsa-jcs-2022` inside the agent's `w3c_vc` plugin, not here.
+All go through `agentClient.ts`. Crypto for those methods is Data Integrity `eddsa-jcs-2022` inside the agent's `w3c_vc` plugin.
 
 ## Optimizations already in place
+
+**Local did:key verify.** Default. No Traction token, no agent HTTP, no root mint round-trip. Node `crypto` verifies Ed25519; JCS via `canonicalize`.
 
 **Exact match before parse.** `matchesAllowedAction` compares normalized strings first. The GraphQL parser and field-subset walk run only on a miss.
 
@@ -153,19 +152,19 @@ All go through `agentClient.ts`. Crypto is Data Integrity `eddsa-jcs-2022` insid
 
 **Fail closed on exotic GraphQL.** Unparseable documents, missing operations, or named fragments return "not allowed" rather than a partial allow.
 
-**unsafeMode short-circuit.** Dev/test skips every agent round-trip after the structural check. Production must leave this off; `configureZcap` warns when it is on.
+**unsafeMode short-circuit.** Dev/test skips every signature check after the structural check. Production must leave this off; `configureZcap` warns when it is on.
 
 ## Caching — what this package does and does not do
 
-There is **no built-in TTL cache** for Traction tokens, minted roots, or verification results. Every `resolveZcapConfig` / `checkInvocation` currently pays those costs. That matches crms-ui's sessionless call sites (`vc-login.service.ts`). The catalog-graphql README calls token caching a follow-up.
+`did:key` verification does not talk to Traction. Token fetch and agent verify still have **no built-in TTL cache** when a non-did:key DID forces the agent path.
 
 | Thing | Cached in this package? | What a service can do |
 |-------|-------------------------|------------------------|
 | Postgres connections | Yes — `pg.Pool` | Tune via the connection string (`max`, `idle_timeout`, …). The constructor only takes `connectionString`; extra `Pool` options are not a first-class API yet. |
 | Tenant row lookup | No | Short TTL keyed by hostname around `findRowByHostname` / `resolveZcapConfig`. |
-| Traction Bearer token | **No** (fresh `POST …/token` every `resolveZcapConfig`) | This is the expensive one. Wrap `resolveZcapConfig` with a per-hostname cache (token lifetime is typically minutes; start with 30–60s TTL and evict on 401 from the agent). |
-| Minted root capability | **No** (called on every verify) | Root is a deterministic function of `invocationTarget` + controller. A process-local cache keyed on those two is safe; not implemented here. |
-| `verify` / `invoke/verify` | **No** | Do not cache "this invocation was valid" — invocations are per request. |
+| Traction Bearer token | **Not fetched** for `did:key` `public_did`. For other methods: **No** (fresh `POST …/token` every `resolveZcapConfig`) | Wrap `resolveZcapConfig` with a per-hostname cache if you still hit the agent path. |
+| Minted root capability | Built locally every time (cheap JSON) | Not an HTTP cache. |
+| `verify` / `invoke/verify` | **No.** Invocations are per request. Not called for did:key. | Do not cache "this invocation was valid". |
 | GraphQL result / gzip | Not this package | catalog-graphql gzips JSON when `Accept-Encoding: gzip`. Response caching belongs in the wallet or a CDN in front of public catalog data, not in the ZCAP gate. |
 
 Example wrapper a resource server can add **outside** this library:

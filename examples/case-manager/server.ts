@@ -12,8 +12,8 @@
  * Still unsafeMode against did-graphql-server's own gate — no live
  * ACA-Py agent here for that. But when CONTROLLER_SEED is set, the
  * capability's own Data Integrity proof IS really, cryptographically
- * verified per request, locally, via Credo/Askar — see
- * verifyRequestCapability.ts. That's a genuine extra check on top of
+ * verified per request, locally, via did-graphql-server's eddsa-jcs-2022
+ * verifier — see verifyRequestCapability.ts. That's a genuine extra check on top of
  * (not a replacement for) did-graphql-server's own allowedAction
  * gating, which keeps running exactly as configured either way.
  *
@@ -46,6 +46,7 @@ import {
 import { createTestAgent } from '../../test/helpers/credoAgent.js'
 import { buildDemoCapability } from './controllerCapability.js'
 import { renderGraphiQLPage } from './graphiql.js'
+import { sendJson } from './sendJson.js'
 import { verifyRequestCapability } from './verifyRequestCapability.js'
 
 const PORT = process.env['PORT'] ? Number(process.env['PORT']) : 4321
@@ -81,29 +82,18 @@ async function readBody(req: http.IncomingMessage): Promise<string> {
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type, x-zcap-invocation',
+  'access-control-allow-headers': 'content-type, accept-encoding, x-zcap-invocation',
 }
 
 async function main() {
-  // One agent for the whole process: signs the demo capability once
-  // here at startup (if CONTROLLER_SEED is set), then verifies
-  // incoming capabilities' real signatures per request throughout the
-  // server's lifetime (verifyRequestCapability.ts) — no wallet
-  // persisted to disk, an in-memory Askar store is enough since
-  // CONTROLLER_SEED re-derives the same key deterministically anyway.
-  const agent = await createTestAgent()
+  const controllerSeed = process.env['CONTROLLER_SEED']
+  // Askar is only needed to sign the demo capability when CONTROLLER_SEED is set.
+  const agent = controllerSeed ? await createTestAgent() : null
 
-  // Every one of the case module's own default queries — the module's
-  // full case-management surface (cfDocuments/cfDocument/cfPackage/
-  // cfItem/cfItemTypes/cfItems) is explorable immediately, not just one
-  // or two hand-picked examples. See the package README's attenuation
-  // rules: a query that's a field-SUBSET of any of these is also
-  // allowed automatically — only a genuinely different root field, or
-  // extra fields these don't already select, gets rejected.
   const { capability, controllerDid } = await buildDemoCapability(agent, {
     invocationTarget: GRAPHQL_ENDPOINT,
     allowedAction: CASE_DEFAULT_QUERIES,
-    controllerSeed: process.env['CONTROLLER_SEED'],
+    controllerSeed,
   })
   const zcapHeader = encodeInvocationHeader({ chain: [capability] })
 
@@ -122,8 +112,7 @@ async function main() {
       return
     }
     if (req.method !== 'POST' || req.url !== '/graphql') {
-      res.writeHead(404, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: 'POST /graphql only' }))
+      sendJson(req, res, 404, { error: 'POST /graphql only' })
       return
     }
 
@@ -131,8 +120,7 @@ async function main() {
     try {
       body = JSON.parse(await readBody(req))
     } catch {
-      res.writeHead(400, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: 'invalid JSON body' }))
+      sendJson(req, res, 400, { error: 'invalid JSON body' })
       return
     }
 
@@ -141,10 +129,12 @@ async function main() {
     // Real, local, additional check — did-graphql-server's own
     // allowedAction/expiry gate below still runs regardless; this is
     // the signature check unsafeMode alone never does.
-    const verification = await verifyRequestCapability(agent, payload)
+    const verification = verifyRequestCapability(payload)
     if (!verification.ok) {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ errors: [{ message: verification.reason, extensions: { code: 'CAPABILITY_INVALID' } }], data: null }))
+      sendJson(req, res, 200, {
+        errors: [{ message: verification.reason, extensions: { code: 'CAPABILITY_INVALID' } }],
+        data: null,
+      })
       return
     }
 
@@ -155,8 +145,7 @@ async function main() {
       contextValue: { zcapConfig, payload, rawQuery: body.query, caseConfig },
     })
 
-    res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify(result))
+    sendJson(req, res, 200, result)
   })
 
   server.listen(PORT, () => {
@@ -164,7 +153,7 @@ async function main() {
     console.log(`CASE server: ${caseConfig.baseUrl}${caseConfig.apiKey ? ' (API key set)' : ''}`)
     console.log(
       controllerDid
-        ? `Controller: ${controllerDid} (real eddsa-jcs-2022-signed capability, derived from CONTROLLER_SEED — verified for real, per request, via Credo/Askar)`
+        ? `Controller: ${controllerDid} (real eddsa-jcs-2022-signed capability, derived from CONTROLLER_SEED — verified per request via local did:key verify)`
         : 'Controller: did:example:demo (unsigned placeholder — set CONTROLLER_SEED for a real signed + really-verified capability)',
     )
     console.log(
@@ -177,7 +166,8 @@ async function main() {
 
   const shutdown = () => {
     server.close()
-    void agent.shutdown().finally(() => process.exit(0))
+    if (agent) void agent.shutdown().finally(() => process.exit(0))
+    else process.exit(0)
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)

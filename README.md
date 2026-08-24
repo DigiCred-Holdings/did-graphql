@@ -49,16 +49,16 @@ You cannot get a stronger guarantee than “this DIDComm peer’s GraphQL API sa
 2. A workflow template names that resource under `catalog.zcap.graphql` (`invocationTarget`, `controller`, `allowedAction`).
 3. On start (or whenever the template says), the sender runs `zcap:delegate`. The holder’s DID receives an attenuated capability over DIDComm; the wallet stores it as an **instance artifact** (`artifacts.zcap.graphql`).
 4. A later `graphql:query` / `graphql:mutate` (executor: receiver) runs in the wallet. **Before any HTTP**, `@digicred-holdings/did-graphql-client` runs the [GraphQL ZCAP validation algorithm](client/README.md#graphql-zcap-validation-algorithm) (`validateGraphqlZcap`): `invocationTarget` MUST be that GraphQL endpoint, HTTPS, not a private IP, `allowedAction` MUST be GraphQL documents, `expires` MUST be valid. This is not proof verification. Then the client asks the holder’s wallet (Bifold / Credo) to sign an invocation and POSTs with `x-zcap-invocation` (`redirect: error`).
-5. The resource server (`@digicred-holdings/did-graphql-server`, used by `catalog-graphql`) checks `allowedAction` membership and asks the **tenant’s** agent to verify the chain and invocation. No keys live in these packages.
+5. The resource server (`@digicred-holdings/did-graphql-server`, used by `catalog-graphql`) checks `allowedAction` membership and verifies the chain and invocation. **`did:key` is verified locally** (eddsa-jcs-2022; the public key is in the DID). Other DID methods still go to the tenant’s ACA-Py `w3c_vc` plugin. No signing keys live in these packages.
 
-Neither package does cryptography itself. **Holder signing** is `digicred-wallet` (Bifold + Credo) via the injected `invokeCapability`. **Tenant verification** is the resource tenant’s ACA-Py `w3c_vc` plugin (`POST /w3c-vc/zcaps/root`, `/verify`, and `/invoke/verify`).
+Neither package signs. **Holder signing** is `digicred-wallet` (Bifold + Credo) via the injected `invokeCapability`. **Verification** is local for `did:key`, or the tenant agent (`POST /w3c-vc/zcaps/verify` and `/invoke/verify`) for other DID methods. The unsigned root is always materialized in-process, not minted over HTTP.
 
 ## Packages
 
 | Path | What |
 |------|------|
 | [`client/`](client/) | `@digicred-holdings/did-graphql-client` — wallet/companion client. Invokes a held capability; never signs it (the holder’s agent does). |
-| [`server/`](server/) | `@digicred-holdings/did-graphql-server` — resource-server invocation checking. Verifies via the tenant’s agent; holds no keys. |
+| [`server/`](server/) | `@digicred-holdings/did-graphql-server` — resource-server invocation checking. Verifies `did:key` locally; other DID methods use the tenant’s agent. Holds no signing keys. |
 
 Technical reference for each package (API, options, optimizations, caching):
 

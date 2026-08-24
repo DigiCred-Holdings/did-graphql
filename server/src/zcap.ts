@@ -1,17 +1,13 @@
 // Real ZCAP-LD invocation checking for a GraphQL resource server.
-// Every check resolves to an actual verification call against the
-// tenant's own agent (see agentClient.ts) — UNLESS `unsafeMode` is on,
-// in which case it falls back to structural-only checks (no agent
-// call, no signature ever inspected). unsafeMode exists purely so the
-// full client→server wire format can be exercised in dev/test without
-// a live agent to verify against; it must default to false and any
-// deployment enabling it should treat that as a loud, deliberate
-// choice, never an accident (see the warning `configureZcap` emits).
+// did:key + eddsa-jcs-2022 is verified locally (public key is in the
+// DID). Other DID methods fall through to the tenant's ACA-Py agent.
+// `unsafeMode` skips signatures entirely — dev/test only.
 
 import { GraphQLError, parse } from 'graphql'
 import type { DocumentNode, OperationDefinitionNode, SelectionSetNode } from 'graphql'
 import type { AgentConfig, Capability } from './agentClient.js'
-import { mintRootCapability, verifyChain, verifyInvocation } from './agentClient.js'
+import { verifyChain, verifyInvocation } from './agentClient.js'
+import { canVerifyLocally, reconstructFullChain, verifyChainLocally, verifyInvocationLocally } from './localVerify.js'
 
 export interface InvocationHeaderPayload {
   chain: Capability[]
@@ -25,7 +21,11 @@ export interface TrustConfig {
 
 export interface ZcapServerConfig {
   trust: TrustConfig
-  /** Required unless unsafeMode is true. */
+  /**
+   * Tenant ACA-Py / Traction admin. Required only when a DID on the
+   * chain is not `did:key` (local verify cannot resolve other methods).
+   * Optional for the default did:key path.
+   */
   agentConfig?: AgentConfig
   /** DEV/TEST ONLY — default false. See module docstring. */
   unsafeMode?: boolean
@@ -38,8 +38,6 @@ export function configureZcap(config: ZcapServerConfig): ZcapServerConfig {
       '[did-graphql-server] UNSAFE_MODE is ON — capability chains are accepted with no ' +
         'invocation signature and no agent verification call. Never enable this in production.',
     )
-  } else if (!config.agentConfig) {
-    throw new Error('ZcapServerConfig.agentConfig is required unless unsafeMode is true')
   }
   return config
 }
@@ -244,25 +242,10 @@ function structuralCheckAuthOnly(
   return presentZcap(leaf, true, null)
 }
 
-// --- real, agent-backed checks ---
+const NOT_DID_KEY =
+  'local verify only supports did:key; pass agentConfig to verify other DID methods'
 
-/**
- * The wallet only ever sends the delegated leaf capability — the root
- * it descends from is never transmitted (it's unsigned, trusted by
- * local dereference per spec). Reconstruct it here so the agent's
- * verify endpoints see a complete leaf→root chain.
- */
-async function reconstructFullChain(
-  agentConfig: AgentConfig,
-  leaf: Capability,
-  trust: TrustConfig,
-): Promise<Capability[]> {
-  const root = await mintRootCapability(agentConfig, {
-    invocationTarget: leaf.invocationTarget,
-    controller: trust.trustedRootController,
-  })
-  return [leaf, root]
-}
+// --- real checks: local did:key, else the tenant agent ---
 
 /** Used by `Query.zcap` (`query Auth { zcap { valid } }`) — chain validity only, no invocation required. */
 export async function checkAuthOnly(
@@ -274,8 +257,16 @@ export async function checkAuthOnly(
   const leaf = payload?.chain?.[0]
   if (!leaf) return presentZcap(undefined, false, 'missing capability')
 
-  const chain = await reconstructFullChain(config.agentConfig!, leaf, config.trust)
-  const result = await verifyChain(config.agentConfig!, {
+  if (canVerifyLocally(leaf, config.trust)) {
+    const problem = verifyChainLocally(leaf, config.trust)
+    if (problem) return presentZcap(leaf, false, problem)
+    return presentZcap(leaf, true, null)
+  }
+
+  if (!config.agentConfig) return presentZcap(leaf, false, NOT_DID_KEY)
+
+  const chain = reconstructFullChain(leaf, config.trust)
+  const result = await verifyChain(config.agentConfig, {
     chain,
     trustedRootController: config.trust.trustedRootController,
     expectedInvocationTarget: config.trust.expectedInvocationTarget,
@@ -302,23 +293,46 @@ export async function checkInvocation(
   if (config.unsafeMode) {
     const base = structuralCheckAuthOnly(payload, config.trust)
     if (!base.valid) return { ok: false, code: 'CAPABILITY_INVALID', message: base.reason ?? undefined }
-  } else {
-    const base = await checkAuthOnly(config, payload)
-    if (!base.valid) return { ok: false, code: 'CAPABILITY_INVALID', message: base.reason ?? undefined }
+    if (!matchesAllowedAction(leaf.allowedAction, rawQueryText)) {
+      return { ok: false, code: 'QUERY_NOT_ALLOWED', message: 'requested operation is not in allowedAction' }
+    }
+    return { ok: true }
+  }
+
+  if (canVerifyLocally(leaf, config.trust, payload?.invocation)) {
+    const chainProblem = verifyChainLocally(leaf, config.trust)
+    if (chainProblem) return { ok: false, code: 'CAPABILITY_INVALID', message: chainProblem }
+    if (!matchesAllowedAction(leaf.allowedAction, rawQueryText)) {
+      return { ok: false, code: 'QUERY_NOT_ALLOWED', message: 'requested operation is not in allowedAction' }
+    }
+    const problem = verifyInvocationLocally(payload!, config.trust, rawQueryText)
+    if (problem) return { ok: false, ...problem }
+    return { ok: true }
+  }
+
+  if (!config.agentConfig) {
+    return { ok: false, code: 'CAPABILITY_INVALID', message: NOT_DID_KEY }
+  }
+
+  const chain = reconstructFullChain(leaf, config.trust)
+  const chainResult = await verifyChain(config.agentConfig, {
+    chain,
+    trustedRootController: config.trust.trustedRootController,
+    expectedInvocationTarget: config.trust.expectedInvocationTarget,
+  })
+  if (!chainResult.verified) {
+    return { ok: false, code: 'CAPABILITY_INVALID', message: summarizeProblems(chainResult.errors) }
   }
 
   if (!matchesAllowedAction(leaf.allowedAction, rawQueryText)) {
     return { ok: false, code: 'QUERY_NOT_ALLOWED', message: 'requested operation is not in allowedAction' }
   }
 
-  if (config.unsafeMode) return { ok: true }
-
   if (!payload?.invocation) {
     return { ok: false, code: 'INVOCATION_INVALID', message: 'missing invocation' }
   }
 
-  const chain = await reconstructFullChain(config.agentConfig!, leaf, config.trust)
-  const result = await verifyInvocation(config.agentConfig!, {
+  const result = await verifyInvocation(config.agentConfig, {
     invocation: payload.invocation,
     chain,
     trustedRootController: config.trust.trustedRootController,

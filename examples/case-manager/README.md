@@ -20,6 +20,17 @@ default query already filled in — try `cfDocuments` first to see what
 frameworks exist on the server, then `cfItemTypes`/`cfItems` with a
 framework title you find there.
 
+**Do not run `cfPackage` from GraphiQL** unless you mean to download an
+entire CASE framework in one response (Wyoming Higher Education is on
+the order of tens of megabytes). It is listed in the demo capability's
+allowed queries for attenuation testing, not as a routine browse
+operation. Prefer `cfDocuments`, `cfItemTypes`, and `cfItems` with a
+`framework` title instead.
+
+`POST /graphql` gzips the JSON body when the client sends
+`Accept-Encoding: gzip` (the wallet `did-graphql-client` always does).
+Clients that omit the header still get plain JSON.
+
 ### Or with Docker
 
 Build **from the repo root**, not this directory — the example imports
@@ -80,13 +91,10 @@ and you'll get the identical DID both times.
 The server doesn't just carry a real signature — it checks one. Every
 request runs `verifyRequestCapability` (`verifyRequestCapability.ts`)
 before touching GraphQL: if the presented capability has a real
-`DataIntegrityProof`, its signature is verified for real, using Credo
-(backed by Askar) directly — the public key comes straight from
-parsing the presented `did:key` string itself (self-certifying, no DID
-resolution network call), so this works for *any* did:key-signed
-capability, not just one this same process happens to hold. Tamper
-with the `proofValue` — flip one character — and the request is
-rejected with `CAPABILITY_INVALID`, same as a genuinely invalid
+`DataIntegrityProof`, its signature is verified locally with
+did-graphql-server's `eddsa-jcs-2022` verifier (no Credo/Askar on the
+hot path). Tamper with the `proofValue` — flip one character — and the
+request is rejected with `CAPABILITY_INVALID`, same as a genuinely invalid
 signature would be anywhere else in this repo.
 
 This is a real, additional check layered on top of

@@ -24,7 +24,7 @@ export interface DemoCapabilityResult {
 }
 
 export async function buildDemoCapability(
-  agent: Agent,
+  agent: Agent | null,
   opts: {
     invocationTarget: string
     allowedAction: string[]
@@ -46,7 +46,7 @@ export async function buildDemoCapability(
     }
   }
 
-  const controller = await createDidKeyFromSeed(agent, opts.controllerSeed)
+  const controller = await createDidKeyFromSeed(agent!, opts.controllerSeed)
   const unsigned = {
     id: `urn:zcap:case-manager-demo:${controller.did}`,
     controller: controller.did,
