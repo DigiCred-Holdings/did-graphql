@@ -18,6 +18,9 @@ import { GRAPHQL_ENDPOINT } from './helpers/zcapFixtures.js'
 
 const DOCUMENTS_QUERY = CASE_DEFAULT_QUERIES[0]!
 const ITEMS_QUERY = CASE_DEFAULT_QUERIES.find((q) => q.includes('cfItems('))!
+const ASSOCIATIONS_QUERY = CASE_DEFAULT_QUERIES.find((q) => q.includes('cfAssociations('))!
+const ASSOCIATIONS_WITH_ITEM_QUERY =
+  'query CFAssociationsWithItem($packageId: ID, $originId: ID) { cfAssociations(packageId: $packageId, originId: $originId) { items { identifier originNodeURI { identifier item { extensions } } } totalCount } }'
 
 const unsafeConfig = configureZcap({
   unsafeMode: true,
@@ -27,9 +30,41 @@ const unsafeConfig = configureZcap({
 const composed = composeModules([caseModule()])
 
 const MOCK_ITEMS = [
-  { identifier: 'item-1', CFItemType: 'Program', fullStatement: 'Program One' },
+  // extensions here deliberately match the standalone /CFItems/item-1
+  // mock below — a real go-case CFPackage's embedded CFItems entries
+  // are the complete item (same as a standalone CFItems/{id} fetch),
+  // not a stripped-down index, and CFAssociationEndpoint.item's
+  // resolver now checks the already-cached package first (a cache hit,
+  // since resolving cfAssociations itself just fetched this same
+  // package) before falling back to a live per-item fetch. Two
+  // deliberately-inconsistent copies of "item-1" would just be a stale
+  // fixture assumption from before that resolver existed, not a real
+  // scenario worth modeling.
+  { identifier: 'item-1', CFItemType: 'Program', fullStatement: 'Program One', extensions: { 'ext:ctdl': { subject: ['Business & Leadership'] } } },
   { identifier: 'item-2', CFItemType: 'Program', fullStatement: 'Program Two' },
   { identifier: 'item-3', CFItemType: 'College', fullStatement: 'Demo College' },
+]
+
+const MOCK_ASSOCIATIONS = [
+  {
+    identifier: 'assoc-1',
+    associationType: 'isChildOf',
+    originNodeURI: { identifier: 'item-1', title: 'Program One' },
+    destinationNodeURI: { identifier: 'item-3', title: 'Demo College' },
+  },
+  {
+    identifier: 'assoc-2',
+    associationType: 'isRelatedTo',
+    originNodeURI: { identifier: 'item-1', title: 'Program One' },
+    destinationNodeURI: { identifier: 'item-2', title: 'Program Two' },
+    extensions: { skillLevel: 3 },
+  },
+  {
+    identifier: 'assoc-3',
+    associationType: 'isChildOf',
+    originNodeURI: { identifier: 'item-2', title: 'Program Two' },
+    destinationNodeURI: { identifier: 'item-3', title: 'Demo College' },
+  },
 ]
 
 function mockFetch(input: RequestInfo | URL): Promise<Response> {
@@ -47,8 +82,16 @@ function mockFetch(input: RequestInfo | URL): Promise<Response> {
         JSON.stringify({
           CFDocument: { identifier: 'pkg-1', uri: 'https://case.example/pkg-1', title: 'Demo Framework' },
           CFItems: MOCK_ITEMS,
-          CFAssociations: [],
+          CFAssociations: MOCK_ASSOCIATIONS,
         }),
+        { headers: { 'content-type': 'application/json' } },
+      ),
+    )
+  }
+  if (url.includes('/CFItems/item-1')) {
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({ CFItem: { ...MOCK_ITEMS[0], extensions: { 'ext:ctdl': { subject: ['Business & Leadership'] } } } }),
         { headers: { 'content-type': 'application/json' } },
       ),
     )
@@ -66,7 +109,7 @@ const leaf = {
   id: 'urn:zcap:test',
   controller: 'did:key:z6Mkholder',
   invocationTarget: GRAPHQL_ENDPOINT,
-  allowedAction: [DOCUMENTS_QUERY, ITEMS_QUERY],
+  allowedAction: [DOCUMENTS_QUERY, ITEMS_QUERY, ASSOCIATIONS_QUERY, ASSOCIATIONS_WITH_ITEM_QUERY],
   expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   proof: { type: 'DataIntegrityProof', verificationMethod: 'did:key:z6Mkissuer#z6Mkissuer' },
 }
@@ -166,4 +209,79 @@ test('cfItems(itemType) filters server-side before pagination, and totalCount re
     ['item-1', 'item-2'],
   )
   assert.ok(data.cfItems.items.every((i) => i.CFItemType === 'Program'))
+})
+
+test('cfAssociations(originId) finds everything one item points at, across the package', async () => {
+  clearCasePackageCache()
+  const payload = decodeInvocationHeader(encodeInvocationHeader({ chain: [leaf] }))
+  const result = await graphql({
+    schema: schemaWithCase(),
+    source: ASSOCIATIONS_QUERY,
+    variableValues: { packageId: 'pkg-1', originId: 'item-1' },
+    contextValue: { zcapConfig: unsafeConfig, payload, rawQuery: ASSOCIATIONS_QUERY, caseConfig },
+  })
+  assert.equal(result.errors, undefined)
+  const data = plain(result.data) as {
+    cfAssociations: { totalCount: number; items: { identifier: string; associationType: string }[] }
+  }
+  assert.equal(data.cfAssociations.totalCount, 2)
+  assert.deepEqual(
+    data.cfAssociations.items.map((a) => a.identifier),
+    ['assoc-1', 'assoc-2'],
+  )
+})
+
+test('cfAssociations(destinationId) finds everything pointing AT one item — the reverse direction', async () => {
+  clearCasePackageCache()
+  const payload = decodeInvocationHeader(encodeInvocationHeader({ chain: [leaf] }))
+  const result = await graphql({
+    schema: schemaWithCase(),
+    source: ASSOCIATIONS_QUERY,
+    variableValues: { packageId: 'pkg-1', destinationId: 'item-3' },
+    contextValue: { zcapConfig: unsafeConfig, payload, rawQuery: ASSOCIATIONS_QUERY, caseConfig },
+  })
+  assert.equal(result.errors, undefined)
+  const data = plain(result.data) as { cfAssociations: { totalCount: number; items: { identifier: string }[] } }
+  assert.equal(data.cfAssociations.totalCount, 2)
+  assert.deepEqual(
+    data.cfAssociations.items.map((a) => a.identifier),
+    ['assoc-1', 'assoc-3'],
+  )
+})
+
+test('cfAssociations(associationType) filters further, and extensions come through', async () => {
+  clearCasePackageCache()
+  const payload = decodeInvocationHeader(encodeInvocationHeader({ chain: [leaf] }))
+  const result = await graphql({
+    schema: schemaWithCase(),
+    source: ASSOCIATIONS_QUERY,
+    variableValues: { packageId: 'pkg-1', originId: 'item-1', associationType: 'isRelatedTo' },
+    contextValue: { zcapConfig: unsafeConfig, payload, rawQuery: ASSOCIATIONS_QUERY, caseConfig },
+  })
+  assert.equal(result.errors, undefined)
+  const data = plain(result.data) as {
+    cfAssociations: { totalCount: number; items: { identifier: string; extensions: unknown }[] }
+  }
+  assert.equal(data.cfAssociations.totalCount, 1)
+  assert.deepEqual(data.cfAssociations.items[0]?.extensions, { skillLevel: 3 })
+})
+
+test('cfAssociations().originNodeURI.item resolves the full CFItem by identifier — one round trip, not two', async () => {
+  clearCasePackageCache()
+  const payload = decodeInvocationHeader(encodeInvocationHeader({ chain: [leaf] }))
+  const result = await graphql({
+    schema: schemaWithCase(),
+    source: ASSOCIATIONS_WITH_ITEM_QUERY,
+    variableValues: { packageId: 'pkg-1', originId: 'item-1' },
+    contextValue: { zcapConfig: unsafeConfig, payload, rawQuery: ASSOCIATIONS_WITH_ITEM_QUERY, caseConfig },
+  })
+  assert.equal(result.errors, undefined)
+  const data = plain(result.data) as {
+    cfAssociations: { items: { identifier: string; originNodeURI: { identifier: string; item: { extensions: unknown } } }[] }
+  }
+  assert.equal(data.cfAssociations.items.length, 2)
+  for (const item of data.cfAssociations.items) {
+    assert.equal(item.originNodeURI.identifier, 'item-1')
+    assert.deepEqual(item.originNodeURI.item.extensions, { 'ext:ctdl': { subject: ['Business & Leadership'] } })
+  }
 })

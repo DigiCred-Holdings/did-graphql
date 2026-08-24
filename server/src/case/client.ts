@@ -25,6 +25,22 @@ export interface CFURIReference {
   uri?: string
 }
 
+/**
+ * Same shape as CFURIReference, plus a same-package hint the GraphQL
+ * layer attaches internally (see queries.ts's getCFAssociations) — NOT
+ * part of the public schema, just a private field on the object handed
+ * to CFAssociationEndpoint.item's resolver, so it can look the item up
+ * in the already-cached package instead of a live per-row GET /CFItems/
+ * {id} network call. The vast majority of associations point within
+ * their own package, so this turns what used to be one live fetch per
+ * returned row into a cache hit; only genuinely cross-package
+ * references (e.g. an O*NET occupation crosswalk pointing at a
+ * different framework's element) still fall back to the live fetch.
+ */
+export interface CFAssociationEndpointRef extends CFURIReference {
+  _packageId?: string
+}
+
 /** The root framework-metadata object for one CASE package — see go-case's GET /ims/case/v1p1/CFDocuments{,/:id}. */
 export interface CFDocument {
   identifier: string
@@ -86,6 +102,8 @@ export interface CFAssociation {
   CFDocumentURI?: CFURIReference
   originNodeURI: { identifier: string; title: string }
   destinationNodeURI: { identifier: string; title: string }
+  /** Free-form, per-framework — e.g. importance/level on an O*NET requirement, skillLevel on a SCED->skill link. Same convention as CFItem.extensions. */
+  extensions?: Record<string, unknown>
 }
 
 export interface CFPackage {
@@ -151,6 +169,21 @@ function getCachedPackage(packageId: string): { package: CFPackage; fetchedAt: n
   return hit
 }
 
+/**
+ * A non-fetching peek: is `packageId` already cached and still within
+ * TTL? Used by getCFItemFromCachedPackage's caller to decide whether
+ * looking an item up "from cache" would actually be free (a genuine
+ * cache hit) or would silently trigger a full package fetch just to
+ * resolve one item — which, for a package that isn't already warm,
+ * could be far more expensive than the single-item GET /CFItems/{id}
+ * it exists to avoid (Wyoming Higher Education alone is ~13MB).
+ */
+export function isPackageCached(config: CaseConfig, packageId: string): boolean {
+  const ttl = config.ttlMs ?? 5 * 60 * 1000
+  const hit = packageCache.get(packageId)
+  return !!hit && Date.now() - hit.fetchedAt < ttl
+}
+
 function cachePackage(packageId: string, pkg: CFPackage): void {
   packageCache.delete(packageId)
   packageCache.set(packageId, { package: pkg, fetchedAt: Date.now() })
@@ -192,6 +225,28 @@ export async function getCFDocument(config: CaseConfig, id: string): Promise<CFD
 export async function getCFItem(config: CaseConfig, id: string): Promise<CFItem | null> {
   const result = await fetchJson<{ CFItem: CFItem }>(`${caseBaseUrl(config)}/CFItems/${encodeURIComponent(id)}`, config)
   return result?.CFItem ?? null
+}
+
+/**
+ * Same lookup as getCFItem, but served from an already-cached package
+ * instead of a live network round trip — an in-memory find() over a
+ * package likely already fetched moments earlier in the same request
+ * (see CFAssociationEndpoint.item's resolver). Deliberately checks
+ * isPackageCached FIRST and returns null immediately on a miss, rather
+ * than calling getCFPackage unconditionally: fetching an entire
+ * not-yet-cached package (Wyoming Higher Education alone is ~13MB)
+ * just to resolve one item would be far more expensive than the single
+ * getCFItem call this exists to avoid — the caller falls back to that
+ * live lookup whenever this returns null.
+ */
+export async function getCFItemFromCachedPackage(
+  config: CaseConfig,
+  packageId: string,
+  id: string,
+): Promise<CFItem | null> {
+  if (!isPackageCached(config, packageId)) return null
+  const pkg = await getCFPackage(config, packageId)
+  return pkg?.CFItems.find((item) => item.identifier === id) ?? null
 }
 
 /** Every framework hosted on the go-case server — GET /ims/case/v1p1/CFDocuments. totalCount from X-Total-Count. */
