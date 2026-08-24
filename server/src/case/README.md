@@ -8,7 +8,7 @@ See the [package README](../../README.md) for `GraphqlModule`/`composeModules`/`
 
 ```ts
 import { buildSchema } from 'graphql'
-import { attachResolvers, authModule, caseModule, composeModules } from '@digicred/did-graphql-server'
+import { attachResolvers, authModule, caseModule, composeModules } from '@digicred-holdings/did-graphql-server'
 
 const composed = composeModules([authModule, caseModule()])
 const schema = buildSchema(composed.sdl)

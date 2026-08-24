@@ -48,8 +48,8 @@ You cannot get a stronger guarantee than “this DIDComm peer’s GraphQL API sa
 1. A tenant publishes a GraphQL endpoint. Its controller DID is the root of authority for that resource.
 2. A workflow template names that resource under `catalog.zcap.graphql` (`invocationTarget`, `controller`, `allowedAction`).
 3. On start (or whenever the template says), the sender runs `zcap:delegate`. The holder’s DID receives an attenuated capability over DIDComm; the wallet stores it as an **instance artifact** (`artifacts.zcap.graphql`).
-4. A later `graphql:query` / `graphql:mutate` (executor: receiver) runs in the wallet. **Before any HTTP**, `@digicred/did-graphql-client` runs the [GraphQL ZCAP validation algorithm](client/README.md#graphql-zcap-validation-algorithm) (`validateGraphqlZcap`): `invocationTarget` MUST be that GraphQL endpoint, HTTPS, not a private IP, `allowedAction` MUST be GraphQL documents, `expires` MUST be valid. This is not proof verification. Then the client asks the holder’s wallet (Bifold / Credo) to sign an invocation and POSTs with `x-zcap-invocation` (`redirect: error`).
-5. The resource server (`@digicred/did-graphql-server`, used by `catalog-graphql`) checks `allowedAction` membership and asks the **tenant’s** agent to verify the chain and invocation. No keys live in these packages.
+4. A later `graphql:query` / `graphql:mutate` (executor: receiver) runs in the wallet. **Before any HTTP**, `@digicred-holdings/did-graphql-client` runs the [GraphQL ZCAP validation algorithm](client/README.md#graphql-zcap-validation-algorithm) (`validateGraphqlZcap`): `invocationTarget` MUST be that GraphQL endpoint, HTTPS, not a private IP, `allowedAction` MUST be GraphQL documents, `expires` MUST be valid. This is not proof verification. Then the client asks the holder’s wallet (Bifold / Credo) to sign an invocation and POSTs with `x-zcap-invocation` (`redirect: error`).
+5. The resource server (`@digicred-holdings/did-graphql-server`, used by `catalog-graphql`) checks `allowedAction` membership and asks the **tenant’s** agent to verify the chain and invocation. No keys live in these packages.
 
 Neither package does cryptography itself. **Holder signing** is `digicred-wallet` (Bifold + Credo) via the injected `invokeCapability`. **Tenant verification** is the resource tenant’s ACA-Py `w3c_vc` plugin (`POST /w3c-vc/zcaps/root`, `/verify`, and `/invoke/verify`).
 
@@ -57,8 +57,8 @@ Neither package does cryptography itself. **Holder signing** is `digicred-wallet
 
 | Path | What |
 |------|------|
-| [`client/`](client/) | `@digicred/did-graphql-client` — wallet/companion client. Invokes a held capability; never signs it (the holder’s agent does). |
-| [`server/`](server/) | `@digicred/did-graphql-server` — resource-server invocation checking. Verifies via the tenant’s agent; holds no keys. |
+| [`client/`](client/) | `@digicred-holdings/did-graphql-client` — wallet/companion client. Invokes a held capability; never signs it (the holder’s agent does). |
+| [`server/`](server/) | `@digicred-holdings/did-graphql-server` — resource-server invocation checking. Verifies via the tenant’s agent; holds no keys. |
 
 Technical reference for each package (API, options, optimizations, caching):
 
