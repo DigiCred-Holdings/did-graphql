@@ -8,9 +8,14 @@
     "server"
   ],
   "scripts": {
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "build": "npm run build --workspaces",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
     "@credo-ts/askar": "0.6.3",
     "@credo-ts/core": "0.6.3",
     "@credo-ts/node": "0.6.3",
