@@ -13,10 +13,15 @@ import {
   GraphQLTransportError,
   RequestTimeoutError,
 } from './errors.js'
+import { readJsonResponse } from './gzip.js'
 
 export interface PreparedRequest {
   method: 'POST'
-  headers: { 'content-type': 'application/json'; 'x-zcap-invocation': string }
+  headers: {
+    'content-type': 'application/json'
+    'accept-encoding': 'gzip'
+    'x-zcap-invocation': string
+  }
   body: string
 }
 
@@ -32,6 +37,7 @@ export function prepareDiagnosticRequest(capability: Capability, request: GraphQ
     method: 'POST',
     headers: {
       'content-type': 'application/json',
+      'accept-encoding': 'gzip',
       'x-zcap-invocation': encodeInvocationHeader({ chain: [capability] }),
     },
     body: JSON.stringify(request),
@@ -54,6 +60,7 @@ export function prepareInvokedRequest(
     method: 'POST',
     headers: {
       'content-type': 'application/json',
+      'accept-encoding': 'gzip',
       'x-zcap-invocation': encodeInvocationHeader({ invocation, chain }),
     },
     body: JSON.stringify(request),
@@ -214,7 +221,7 @@ export class DidGraphQLClient {
     try {
       const res = await this.fetchImpl(this.endpoint, { ...prepared, signal: combined, redirect: 'error' })
       if (!res.ok) throw new GraphQLTransportError(res.status, res.statusText)
-      return (await res.json()) as T
+      return await readJsonResponse<T>(res)
     } catch (err) {
       if (timeoutController?.signal.aborted && timeoutController.signal.reason instanceof RequestTimeoutError) {
         throw timeoutController.signal.reason

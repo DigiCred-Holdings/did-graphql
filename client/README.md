@@ -111,6 +111,7 @@ validateGraphqlZcap(artifacts.zcap.graphql, {
 | `DidGraphQLClient` | `query()`, `checkAuth()`, `setCapability()` |
 | `validateGraphqlZcap` / `isValidGraphqlZcap` / `collectGraphqlZcapProblems` | GraphQL ZCAP algorithm (MUST rules above) |
 | `prepareInvokedRequest` / `prepareDiagnosticRequest` | Pure header/body builders for a custom HTTP stack — no `fetch` |
+| `readJsonResponse` / `decodeJsonBody` | Parse the GraphQL body; inflate gzip when the bytes are still compressed |
 | `encodeInvocationHeader` / `decodeInvocationHeader` | `x-zcap-invocation` = base64(JSON) |
 | `isExpired` / `validateCapabilityShape` / `isValidCapabilityShape` | Local checks, no network |
 | `CapabilityExpiredError`, `InvalidCapabilityError`, `InsecureEndpointError`, `RequestTimeoutError`, `GraphQLTransportError` | Typed failures |
@@ -125,6 +126,7 @@ validateGraphqlZcap(artifacts.zcap.graphql, {
 
 ```
 content-type: application/json
+accept-encoding: gzip
 x-zcap-invocation: <base64 JSON>
 ```
 
@@ -144,7 +146,7 @@ Capability fields match CRMS `vaults/v1_0/zcap/model.py::Capability` (camelCase)
 
 These are not knobs. They run unless you opt out of the related option.
 
-**Diagnostic header cache.** Unsigned payloads (`checkAuth()`, `unsafeMode` queries) encode the same capability over and over. `encodeInvocationHeader` caches that base64 string in a `WeakMap` keyed by the capability object. Signed invocations are **not** cached — each one is a new proof.
+**Leaf JSON cache.** `allowedAction` on the leaf is the bulky part of `x-zcap-invocation`. `encodeInvocationHeader` `JSON.stringify`s that leaf once (`WeakMap` keyed by the capability object) and splices a freshly stringified `invocation` on every signed `query()`. The proof itself is never cached. Unsigned diagnostic headers (`checkAuth()`, `unsafeMode`) go one step further and cache the final base64 string.
 
 **GraphQL ZCAP algorithm before I/O.** Constructor and `setCapability()` run `validateGraphqlZcap` (full MUST list above). The client will not send `x-zcap-invocation` until that succeeds.
 
@@ -154,7 +156,9 @@ These are not knobs. They run unless you opt out of the related option.
 
 **Isomorphic base64.** `Buffer` in Node, `btoa`/`atob` with UTF-8 round-trip in the browser / React Native. No polyfill assumed.
 
-**Custom transport.** `prepareInvokedRequest` returns `{ method, headers, body }` if the wallet already has an HTTP layer and only needs the header shape.
+**Gzip responses.** Requests send `Accept-Encoding: gzip`. catalog-graphql already gzips browse JSON when that header is present. The client does **not** call `res.json()` on the raw body: `readJsonResponse` looks at the gzip magic bytes (`1f 8b`) and inflates with `DecompressionStream` (browser / Node 20+) or `fflate` (React Native). If `fetch` already decompressed, the body starts with `{` and is parsed as JSON. Trusting `Content-Encoding` alone, or sending the header without an inflater, breaks React Native and Node `fetch` (setting `Accept-Encoding` disables undici's auto-decompress).
+
+**Custom transport.** `prepareInvokedRequest` returns `{ method, headers, body }` if the wallet already has an HTTP layer and only needs the header shape. Those headers include `accept-encoding: gzip` — use `readJsonResponse(res)` (or `decodeJsonBody` on the raw bytes) instead of `res.json()`.
 
 **Reuse the client.** `setCapability()` swaps the leaf, re-runs the validation algorithm, and POSTs to the new canonical `invocationTarget`.
 
@@ -162,7 +166,8 @@ These are not knobs. They run unless you opt out of the related option.
 
 | Thing | Cached? | Configurable? |
 |-------|---------|----------------|
-| Unsigned `x-zcap-invocation` header | Yes, `WeakMap` on the capability object | No — always on. Drop the object (or `setCapability` with a new one) and the entry goes away. |
+| Unsigned `x-zcap-invocation` header | Yes, `WeakMap` on the capability object (final base64) | No — always on. Drop the object (or `setCapability` with a new one) and the entry goes away. |
+| Leaf capability JSON (invoked headers) | Yes, `WeakMap` on the capability object | No — always on. Only the `invocation` object is stringified per `query()`. |
 | Signed invocation | **No.** A proof is one-use for one query string, produced fresh by the holder agent. | Do not cache `invokeCapability` results across queries. |
 | GraphQL response body | **No.** This is an auth transport, not an Apollo/urql cache. | Cache in the workflow UI (`context_key` on the instance, React Query, etc.). |
 | HTTPS / timeout / expiry | Policy, not a cache | The options table above |
