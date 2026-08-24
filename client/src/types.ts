@@ -31,9 +31,11 @@ export interface Capability {
 }
 
 /**
- * A signed capabilityInvocation document. This package never builds or
- * signs one itself — `digicred-wallet` (Bifold + Credo) produces it via
- * the injected `invokeCapability` function.
+ * A signed capabilityInvocation document. This package builds the
+ * unsigned document + eddsa-jcs-2022 hash (`createUnsignedCapabilityInvocation`)
+ * and assembles the wire shape after the caller signs
+ * (`finalizeCapabilityInvocation`). It never holds keys — signing stays
+ * in the injected `invokeCapability` (e.g. Credo KMS in digicred-wallet).
  */
 export interface InvocationProof {
   type: string
@@ -70,8 +72,8 @@ export interface InvocationHeaderPayload {
 /**
  * Caller-supplied signing function — implemented by `digicred-wallet`
  * (Bifold + Credo), which holds the chain's leaf controller's key.
- * This package deliberately has no Ed25519/JCS implementation of its
- * own; see the did-graphql-client README for why.
+ * Use `createUnsignedCapabilityInvocation` + `finalizeCapabilityInvocation`
+ * for the proof format; this callback only supplies the Ed25519 signature.
  */
 export type InvokeCapabilityFn = (
   capability: Capability,
