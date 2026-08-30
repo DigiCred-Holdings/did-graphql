@@ -1,6 +1,6 @@
 {
   "name": "@digicred-holdings/did-graphql-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Server-side ZCAP-LD invocation checking for a GraphQL resource server — verifies did:key + eddsa-jcs-2022 entirely in-process (no agent, no database). Includes an explicit UNSAFE_MODE for dev/test without real capabilities.",
   "license": "Apache-2.0",
   "type": "module",
