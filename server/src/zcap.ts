@@ -1,45 +1,67 @@
 // Real ZCAP-LD invocation checking for a GraphQL resource server.
-// Every check resolves to an actual verification call against the
-// tenant's own agent (see agentClient.ts) — UNLESS `unsafeMode` is on,
-// in which case it falls back to structural-only checks (no agent
-// call, no signature ever inspected). unsafeMode exists purely so the
-// full client→server wire format can be exercised in dev/test without
-// a live agent to verify against; it must default to false and any
-// deployment enabling it should treat that as a loud, deliberate
-// choice, never an accident (see the warning `configureZcap` emits).
+// did:key + eddsa-jcs-2022 is verified entirely in-process (see
+// localVerify.ts) — no other DID method is supported, and no agent
+// or database call is ever made from this module. The caller (the
+// consuming resource server, e.g. catalog-graphql) is responsible for
+// resolving which root capability is trusted for a given request —
+// by its own (controller, id, invocationTarget) lookup — and passes
+// the result in as `rootCapability`.
+//
+// `unsafeMode` skips signature verification entirely (structural
+// checks only) — dev/test only, so the full client<->server wire
+// format can be exercised with no capability to actually verify
+// against. Must default to false; see the warning `configureZcap`
+// emits when it's on.
 
 import { GraphQLError, parse } from 'graphql'
 import type { DocumentNode, OperationDefinitionNode, SelectionSetNode } from 'graphql'
-import type { AgentConfig, Capability } from './agentClient.js'
-import { mintRootCapability, verifyChain, verifyInvocation } from './agentClient.js'
+import type { Capability, SignedInvocation } from './localVerify.js'
+import {
+  verifyActionAllowed,
+  verifyChain as verifyChainLocally,
+  verifyInvocationProof,
+} from './localVerify.js'
+import type { ProblemDetail } from './problemDetails.js'
 
 export interface InvocationHeaderPayload {
   chain: Capability[]
-  invocation?: Record<string, unknown>
+  invocation?: SignedInvocation
 }
 
+/** Used only by `unsafeMode` — structural checks against a fixed expectation, no signature ever inspected. */
 export interface TrustConfig {
   trustedRootController: string
   expectedInvocationTarget?: string
 }
 
-export interface ZcapServerConfig {
+export interface UnsafeZcapServerConfig {
+  /** DEV/TEST ONLY. See module docstring. */
+  unsafeMode: true
   trust: TrustConfig
-  /** Required unless unsafeMode is true. */
-  agentConfig?: AgentConfig
-  /** DEV/TEST ONLY — default false. See module docstring. */
-  unsafeMode?: boolean
 }
+
+export interface RealZcapServerConfig {
+  unsafeMode?: false
+  /**
+   * The tenant's stored root capability for this request — resolved
+   * by the caller's own DB lookup (controller, id, invocationTarget),
+   * NEVER reconstructed by this library. Its `id` is what the
+   * presented leaf's `parentCapability` is checked against.
+   */
+  rootCapability: Capability
+  /** The target this request expects, derived from e.g. the Host header + a fixed path. */
+  expectedInvocationTarget: string
+}
+
+export type ZcapServerConfig = UnsafeZcapServerConfig | RealZcapServerConfig
 
 export function configureZcap(config: ZcapServerConfig): ZcapServerConfig {
   if (config.unsafeMode) {
     // eslint-disable-next-line no-console
     console.warn(
       '[did-graphql-server] UNSAFE_MODE is ON — capability chains are accepted with no ' +
-        'invocation signature and no agent verification call. Never enable this in production.',
+        'signature ever verified. Never enable this in production.',
     )
-  } else if (!config.agentConfig) {
-    throw new Error('ZcapServerConfig.agentConfig is required unless unsafeMode is true')
   }
   return config
 }
@@ -55,10 +77,6 @@ export function decodeInvocationHeader(headerValue: string | undefined): Invocat
 
 function normalizeQuery(text: string | undefined): string {
   return String(text ?? '').replace(/\s+/g, ' ').trim()
-}
-
-function summarizeProblems(problems: { title?: string; type?: string }[] | undefined): string {
-  return (problems ?? []).map((p) => p.title ?? p.type ?? 'unknown problem').join('; ') || 'verification failed'
 }
 
 // --- allowedAction as an attenuation mechanism, not just an exact-match whitelist ---
@@ -201,10 +219,16 @@ function expiryProblem(cap: Capability, now: Date): string | null {
   return null
 }
 
-function presentZcap(leaf: Capability | undefined, valid: boolean, reason: string | null): PresentedZcap {
+function presentZcap(
+  leaf: Capability | undefined,
+  valid: boolean,
+  reason: string | null,
+  problems?: ProblemDetail[],
+): PresentedZcap {
   return {
     valid,
     reason,
+    problems: problems ?? [],
     id: leaf?.id ?? null,
     controller: leaf?.controller ?? null,
     invocationTarget: leaf?.invocationTarget ?? null,
@@ -215,11 +239,14 @@ function presentZcap(leaf: Capability | undefined, valid: boolean, reason: strin
 
 /**
  * GraphQL `Zcap` payload for `query Auth { zcap { valid } }`.
- * Leaf fields are echoed even when `valid` is false.
+ * Leaf fields are echoed even when `valid` is false. `problems` is the
+ * structured (typeURI-tagged) form of `reason` — empty when `valid`,
+ * or under `unsafeMode` (which never produces ProblemDetails).
  */
 export interface PresentedZcap {
   valid: boolean
   reason: string | null
+  problems: ProblemDetail[]
   id: string | null
   controller: string | null
   invocationTarget: string | null
@@ -227,10 +254,7 @@ export interface PresentedZcap {
   expires: string | null
 }
 
-function structuralCheckAuthOnly(
-  payload: InvocationHeaderPayload | null,
-  trust: TrustConfig,
-): PresentedZcap {
+function structuralCheckAuthOnly(payload: InvocationHeaderPayload | null, trust: TrustConfig): PresentedZcap {
   const leaf = payload?.chain?.[0]
   const problems = structuralProblems(leaf)
   if (problems.length) return presentZcap(leaf, false, problems.join('; '))
@@ -244,43 +268,19 @@ function structuralCheckAuthOnly(
   return presentZcap(leaf, true, null)
 }
 
-// --- real, agent-backed checks ---
-
-/**
- * The wallet only ever sends the delegated leaf capability — the root
- * it descends from is never transmitted (it's unsigned, trusted by
- * local dereference per spec). Reconstruct it here so the agent's
- * verify endpoints see a complete leaf→root chain.
- */
-async function reconstructFullChain(
-  agentConfig: AgentConfig,
-  leaf: Capability,
-  trust: TrustConfig,
-): Promise<Capability[]> {
-  const root = await mintRootCapability(agentConfig, {
-    invocationTarget: leaf.invocationTarget,
-    controller: trust.trustedRootController,
-  })
-  return [leaf, root]
-}
+// --- real checks: local did:key verification only ---
 
 /** Used by `Query.zcap` (`query Auth { zcap { valid } }`) — chain validity only, no invocation required. */
-export async function checkAuthOnly(
-  config: ZcapServerConfig,
-  payload: InvocationHeaderPayload | null,
-): Promise<PresentedZcap> {
+export function checkAuthOnly(config: ZcapServerConfig, payload: InvocationHeaderPayload | null): PresentedZcap {
   if (config.unsafeMode) return structuralCheckAuthOnly(payload, config.trust)
 
   const leaf = payload?.chain?.[0]
   if (!leaf) return presentZcap(undefined, false, 'missing capability')
 
-  const chain = await reconstructFullChain(config.agentConfig!, leaf, config.trust)
-  const result = await verifyChain(config.agentConfig!, {
-    chain,
-    trustedRootController: config.trust.trustedRootController,
-    expectedInvocationTarget: config.trust.expectedInvocationTarget,
-  })
-  if (!result.verified) return presentZcap(leaf, false, summarizeProblems(result.errors))
+  const result = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget)
+  if (!result.verified) {
+    return presentZcap(leaf, false, result.errors.map((e) => e.detail).join('; '), result.errors)
+  }
   return presentZcap(leaf, true, null)
 }
 
@@ -288,44 +288,55 @@ export interface InvocationCheckResult {
   ok: boolean
   code?: 'CAPABILITY_INVALID' | 'QUERY_NOT_ALLOWED' | 'INVOCATION_INVALID'
   message?: string
+  problems?: ProblemDetail[]
 }
 
-/** Used by real data-fetching resolvers — full gate: chain validity + allowedAction match + (unless unsafeMode) real invocation verification. */
-export async function checkInvocation(
+/** Used by real data-fetching resolvers — full gate: chain validity + allowedAction match + a real invocation proof (unless unsafeMode). */
+export function checkInvocation(
   config: ZcapServerConfig,
   payload: InvocationHeaderPayload | null,
   rawQueryText: string,
-): Promise<InvocationCheckResult> {
+): InvocationCheckResult {
   const leaf = payload?.chain?.[0]
   if (!leaf) return { ok: false, code: 'CAPABILITY_INVALID', message: 'missing capability' }
 
   if (config.unsafeMode) {
     const base = structuralCheckAuthOnly(payload, config.trust)
     if (!base.valid) return { ok: false, code: 'CAPABILITY_INVALID', message: base.reason ?? undefined }
-  } else {
-    const base = await checkAuthOnly(config, payload)
-    if (!base.valid) return { ok: false, code: 'CAPABILITY_INVALID', message: base.reason ?? undefined }
+    if (!matchesAllowedAction(leaf.allowedAction, rawQueryText)) {
+      return { ok: false, code: 'QUERY_NOT_ALLOWED', message: 'requested operation is not in allowedAction' }
+    }
+    return { ok: true }
   }
 
-  if (!matchesAllowedAction(leaf.allowedAction, rawQueryText)) {
-    return { ok: false, code: 'QUERY_NOT_ALLOWED', message: 'requested operation is not in allowedAction' }
+  const chainResult = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget)
+  if (!chainResult.verified) {
+    return {
+      ok: false,
+      code: 'CAPABILITY_INVALID',
+      message: chainResult.errors.map((e) => e.detail).join('; '),
+      problems: chainResult.errors,
+    }
   }
 
-  if (config.unsafeMode) return { ok: true }
-
-  if (!payload?.invocation) {
-    return { ok: false, code: 'INVOCATION_INVALID', message: 'missing invocation' }
+  const actionResult = verifyActionAllowed(leaf, rawQueryText, matchesAllowedAction)
+  if (!actionResult.verified) {
+    return {
+      ok: false,
+      code: 'QUERY_NOT_ALLOWED',
+      message: actionResult.errors.map((e) => e.detail).join('; '),
+      problems: actionResult.errors,
+    }
   }
 
-  const chain = await reconstructFullChain(config.agentConfig!, leaf, config.trust)
-  const result = await verifyInvocation(config.agentConfig!, {
-    invocation: payload.invocation,
-    chain,
-    trustedRootController: config.trust.trustedRootController,
-    expectedInvocationTarget: config.trust.expectedInvocationTarget,
-  })
-  if (!result.verified) {
-    return { ok: false, code: 'INVOCATION_INVALID', message: summarizeProblems(result.errors) }
+  const invocationResult = verifyInvocationProof(leaf, payload?.invocation, rawQueryText)
+  if (!invocationResult.verified) {
+    return {
+      ok: false,
+      code: 'INVOCATION_INVALID',
+      message: invocationResult.errors.map((e) => e.detail).join('; '),
+      problems: invocationResult.errors,
+    }
   }
   return { ok: true }
 }
@@ -337,10 +348,10 @@ export async function requireAuthorizedQuery(
   rawQueryText: string,
   fieldName: string,
 ): Promise<void> {
-  const result = await checkInvocation(config, payload, rawQueryText)
+  const result = checkInvocation(config, payload, rawQueryText)
   if (!result.ok) {
     throw new GraphQLError(result.message ?? 'unauthorized', {
-      extensions: { code: result.code },
+      extensions: { code: result.code, problems: result.problems },
       path: [fieldName],
     })
   }
