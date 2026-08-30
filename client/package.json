@@ -21,11 +21,13 @@
   "files": [
     "dist",
     "src",
+    "scripts",
     "tsconfig.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsc -p tsconfig.json --watch"
+    "dev": "tsc -p tsconfig.json --watch",
+    "postinstall": "node scripts/ensure-built.cjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
