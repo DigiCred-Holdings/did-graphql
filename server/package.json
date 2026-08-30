@@ -1,6 +1,6 @@
 {
   "name": "@digicred-holdings/did-graphql-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Server-side ZCAP-LD invocation checking for a GraphQL resource server — verifies via a tenant's own ACA-Py agent (w3c_vc zcaps/* routes), no signing/verification keys held here. Includes an explicit UNSAFE_MODE for dev/test without a live agent.",
   "license": "Apache-2.0",
   "type": "module",
