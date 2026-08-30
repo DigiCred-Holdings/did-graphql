@@ -1,7 +1,7 @@
 {
   "name": "@digicred-holdings/did-graphql-server",
-  "version": "0.2.1",
-  "description": "Server-side ZCAP-LD invocation checking for a GraphQL resource server — verifies via a tenant's own ACA-Py agent (w3c_vc zcaps/* routes), no signing/verification keys held here. Includes an explicit UNSAFE_MODE for dev/test without a live agent.",
+  "version": "0.3.0",
+  "description": "Server-side ZCAP-LD invocation checking for a GraphQL resource server — verifies did:key + eddsa-jcs-2022 entirely in-process (no agent, no database). Includes an explicit UNSAFE_MODE for dev/test without real capabilities.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
@@ -29,11 +29,11 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/pg": "^8.23.0",
     "typescript": "^5.6.0"
   },
   "dependencies": {
-    "graphql": "^16.14.2",
-    "pg": "^8.23.0"
+    "bs58": "^6.0.0",
+    "canonicalize": "^2.0.0",
+    "graphql": "^16.14.2"
   }
 }

@@ -1,6 +1,6 @@
 # @digicred-holdings/did-graphql-server
 
-Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **through the tenant's ACA-Py agent**. This package holds no signing or verification keys. Holder signing is `digicred-wallet` (Bifold + Credo), not this package.
+Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **entirely in-process** — did:key + `eddsa-jcs-2022` Data Integrity proofs, no ACA-Py agent call and no database read from inside this package. This package holds no signing keys of its own; the public key it verifies against comes straight from the presented `did:key` string. Holder signing is `digicred-wallet` (Bifold + Credo), not this package.
 
 See the [repo README](../README.md) for the product story. This page is the server API, attenuation rules, and the optimizations that are already in place.
 
@@ -12,15 +12,16 @@ See the [repo README](../README.md) for the product story. This page is the serv
 npm install @digicred-holdings/did-graphql-server
 ```
 
-Until published, catalog-graphql vendors this package (`file:./vendor/did-graphql-server`) or depends on `file:…/server`. A git dependency pinned to this repo's `server` workspace also works, the same way — see the client README's [Install](../client/README.md#install) for the `workspace=` syntax and why `files` lists `src`/`tsconfig.json` alongside `dist`.
+Node-only. Depends on `graphql` (query parse / field-subset), `bs58` and `canonicalize` (did:key decoding, JCS canonicalization for `eddsa-jcs-2022`).
 
-For a local `file:` dependency, build first:
+## Design: who resolves what
 
-```bash
-cd server && npm install && npm run build
-```
+This package does **pure cryptographic and structural verification only**. It is deliberately ignorant of two things a real resource server needs, on purpose:
 
-Node-only. Depends on `graphql` (query parse / field-subset) and `pg` (optional `TenantResolver`).
+- **Which root capability is trusted for this request.** The wallet only ever sends the delegated leaf — the root it descends from is never transmitted (unsigned, trusted by local dereference per the ZCAP-LD spec). Resolving *which* root is trusted for a given request — normally a database lookup keyed by `(controller, id, invocationTarget)` — is the caller's job. This package never queries a database and never reconstructs a root on its own; you hand it the root capability you already trust, and it checks the presented leaf against exactly that object.
+- **Which tenant a request belongs to.** Not a concept this package has at all. Whatever resolved `rootCapability` you pass in already implies the tenant; there is no separate tenant-resolution step here.
+
+Concretely: **the library never calls the tenant's ACA-Py agent**, and **the library never opens a database connection**. Both of those are the consuming resource server's responsibility, using its own store (e.g. digicred-crms's `zcap_capabilities` table).
 
 ## Usage
 
@@ -32,31 +33,28 @@ import {
   checkInvocation,
 } from '@digicred-holdings/did-graphql-server'
 
+// rootCapability is whatever YOUR lookup resolved for this request —
+// e.g. a `zcap_capabilities` row keyed by (controller, id, invocationTarget)
+// derived from the Host header. Never reconstructed by this package.
 const zcapConfig = configureZcap({
-  trust: {
-    trustedRootController: tenant.publicDid,       // capability controller DID
-    expectedInvocationTarget: 'https://…/graphql', // optional pin
-  },
-  agentConfig: {
-    baseUrl: tenant.tractionUrl,  // ACA-Py admin
-    token: tractionBearerToken,
-    apiKey: process.env.ACAPY_API_KEY, // optional x-api-key
-  },
+  rootCapability,                          // { id, controller, invocationTarget, ... }
+  expectedInvocationTarget: 'https://…/graphql', // derived from this request's Host header
 })
 
 const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'])
 
 // Diagnostic: query Auth { zcap { valid } } — chain only, no invocation.
-const auth = await checkAuthOnly(zcapConfig, payload)
+const auth = checkAuthOnly(zcapConfig, payload)
 
 // Real resolver: chain + allowedAction + signed invocation.
-const gate = await checkInvocation(zcapConfig, payload, rawQueryText)
+const gate = checkInvocation(zcapConfig, payload, rawQueryText)
 if (!gate.ok) {
   // gate.code: CAPABILITY_INVALID | QUERY_NOT_ALLOWED | INVOCATION_INVALID
+  // gate.problems: ProblemDetail[] — typeURI-tagged, see "Problem details" below
 }
 ```
 
-`configureZcap()` is required at startup (or whenever you build a config): it refuses a missing `agentConfig` unless `unsafeMode` is on, and logs a warning if unsafe mode is on.
+`checkAuthOnly`/`checkInvocation` are synchronous — no I/O happens inside this package at all.
 
 ## GraphQL modules
 
@@ -79,46 +77,29 @@ GraphiQL `defaultQuery` is `authModule.defaultQueries[0]` (`AUTH_QUERY`).
 
 ### `ZcapServerConfig`
 
+A union of two shapes:
+
 | Field | Required | What it does |
 |-------|----------|----------------|
-| `trust.trustedRootController` | yes | Tenant public DID. Root of the delegation chain. |
-| `trust.expectedInvocationTarget` | no | If set, the leaf `invocationTarget` must equal this URL. |
-| `agentConfig.baseUrl` | unless unsafe | Traction / ACA-Py base URL. |
-| `agentConfig.token` | unless unsafe | Bearer token for the tenant wallet. |
-| `agentConfig.apiKey` | no | Extra `x-api-key` header some agents expect. |
-| `unsafeMode` | default `false` | Skip all agent crypto. Structural shape + expiry + `allowedAction` only. |
+| `rootCapability` | yes (real mode) | The trusted root capability object for this request, resolved by the caller's own lookup. Its `id` is what the leaf's `parentCapability` is checked against; its `controller` (must be a `did:key`) is who the leaf's delegation proof must be signed by. |
+| `expectedInvocationTarget` | yes (real mode) | The target this request expects — derived from e.g. the Host header + a fixed path. The leaf's own `invocationTarget` must equal this. |
+| `unsafeMode` | default `false` | Skip all cryptographic verification. Structural shape + expiry + `allowedAction` only, checked against `trust.trustedRootController`/`trust.expectedInvocationTarget` (a fixed pair, not a per-request lookup). Dev/test only. |
 
-### Multi-tenant: `TenantResolver`
-
-One deployment, many CRMS tenants. Looks up `tenants` in the **same Postgres** crms-ui uses, decrypts `traction_tenant_api_key` (AES-256-GCM `enc:v1:…`, `ENCRYPTION_KEY`), fetches a Traction token, and returns a ready `ZcapServerConfig`.
-
-```ts
-import { TenantResolver } from '@digicred-holdings/did-graphql-server'
-
-const tenants = new TenantResolver({
-  connectionString: process.env.DATABASE_URL!,
-  encryptionKey: process.env.ENCRYPTION_KEY!,
-})
-
-const zcapConfig = await tenants.resolveZcapConfig(req.headers.host, {
-  expectedInvocationTarget: process.env.EXPECTED_INVOCATION_TARGET,
-})
-```
-
-Hostname lookup order matches `TenantsService.findByHostname`: exact host → host without port → `localhost` / `127.0.0.1` swap.
-
-Call `tenants.close()` on shutdown to drain the `pg` pool.
-
-`TenantResolver` is intentionally bound to digicred-crms's `tenants` columns. A schema-agnostic resolver is not provided.
+Only `did:key` root controllers are supported — any other DID method fails closed with an `UNSUPPORTED_CONTROLLER` problem. There is no agent fallback for other methods.
 
 ## What the gate actually checks
 
-`checkInvocation` in order:
+`checkInvocation`, in order:
 
 1. Leaf present.
-2. Chain valid — `POST /w3c-vc/zcaps/root` to reconstruct the unsigned root, then `POST /w3c-vc/zcaps/verify`. The wallet never sends the root.
+2. Chain valid (`verifyChain` in `localVerify.ts`):
+   - both root and leaf controllers are `did:key`,
+   - leaf `invocationTarget` matches `expectedInvocationTarget` (the Host-header cross-check),
+   - leaf `parentCapability` matches the resolved root's `id` (a separate, explicit check — not folded into any lookup),
+   - leaf not expired,
+   - leaf's delegation proof (`proofPurpose: capabilityDelegation`) is signed by the **root's** controller, and verifies as `eddsa-jcs-2022`.
 3. `allowedAction` membership (see below).
-4. Signed invocation — `POST /w3c-vc/zcaps/invoke/verify`.
+4. A real capabilityInvocation proof, signed by the **leaf's own** controller (the current holder — a different signer than step 2's delegation proof), matching this capability/target/query, and verifying as `eddsa-jcs-2022`.
 
 `checkAuthOnly` stops after step 2 (unsafe mode: structural + expiry + optional target pin).
 
@@ -133,62 +114,31 @@ Argument **values** (`limit`, `filter`, …) are **not** constrained. A holder w
 
 Inline fragments (`... on College`) are walked (needed for `node`). Aliased duplicate root fields union their selections.
 
-## Agent calls
+## Problem details
 
-| When | Route |
-|------|--------|
-| Reconstruct root | `POST /w3c-vc/zcaps/root` |
-| Diagnostic / chain | `POST /w3c-vc/zcaps/verify` |
-| Real query | `POST /w3c-vc/zcaps/invoke/verify` |
+Every rejection reason is a `ProblemDetail` (`{ typeURI, title, detail }`), drawn from a fixed vocabulary in `problemDetails.ts`:
 
-All go through `agentClient.ts`. Crypto is Data Integrity `eddsa-jcs-2022` inside the agent's `w3c_vc` plugin, not here.
+`urn:zcap:problemDetail:error:{SLUG}` — `MALFORMED_CAPABILITY`, `UNSUPPORTED_CONTROLLER`, `UNSUPPORTED_CRYPTOSUITE`, `PROOF_INVALID`, `ROOT_CAPABILITY_UNKNOWN` (raised by the *caller's* own lookup, not this package — reserved here for that purpose), `PARENT_CAPABILITY_MISMATCH`, `INVOCATION_TARGET_MISMATCH`, `ATTENUATION_INVALID`, `EXPIRED`, `ACTION_NOT_ALLOWED`, `INVOCATION_MISSING`.
+
+`urn:zcap:problemDetail:warning:{SLUG}` — `LEGACY_ROOT_FIELDS`, `EXPIRES_SOON`. Warnings never cause `verified: false` on their own.
+
+`checkAuthOnly`'s `PresentedZcap.problems` and `checkInvocation`'s `InvocationCheckResult.problems` both carry the raw list; `reason`/`message` are the same information flattened to a string for convenience.
 
 ## Optimizations already in place
+
+**No I/O, ever, in the real path.** Every check in `localVerify.ts` is a pure function over the objects you hand it — no network call, no agent, no database.
 
 **Exact match before parse.** `matchesAllowedAction` compares normalized strings first. The GraphQL parser and field-subset walk run only on a miss.
 
 **Subset attenuation.** Register the *widest* query you are willing to allow. Leaner wallet queries (fewer fields, different order) do not need their own `allowedAction` rows.
 
-**`pg` connection pool.** `TenantResolver` uses `pg.Pool`, so tenant lookups reuse TCP connections to Postgres. That is connection pooling, not a result cache.
-
 **Fail closed on exotic GraphQL.** Unparseable documents, missing operations, or named fragments return "not allowed" rather than a partial allow.
 
-**unsafeMode short-circuit.** Dev/test skips every agent round-trip after the structural check. Production must leave this off; `configureZcap` warns when it is on.
+**unsafeMode short-circuit.** Dev/test skips every cryptographic check. Production must leave this off; `configureZcap` warns when it is on.
 
-## Caching — what this package does and does not do
+## Caching
 
-There is **no built-in TTL cache** for Traction tokens, minted roots, or verification results. Every `resolveZcapConfig` / `checkInvocation` currently pays those costs. That matches crms-ui's sessionless call sites (`vc-login.service.ts`). The catalog-graphql README calls token caching a follow-up.
-
-| Thing | Cached in this package? | What a service can do |
-|-------|-------------------------|------------------------|
-| Postgres connections | Yes — `pg.Pool` | Tune via the connection string (`max`, `idle_timeout`, …). The constructor only takes `connectionString`; extra `Pool` options are not a first-class API yet. |
-| Tenant row lookup | No | Short TTL keyed by hostname around `findRowByHostname` / `resolveZcapConfig`. |
-| Traction Bearer token | **No** (fresh `POST …/token` every `resolveZcapConfig`) | This is the expensive one. Wrap `resolveZcapConfig` with a per-hostname cache (token lifetime is typically minutes; start with 30–60s TTL and evict on 401 from the agent). |
-| Minted root capability | **No** (called on every verify) | Root is a deterministic function of `invocationTarget` + controller. A process-local cache keyed on those two is safe; not implemented here. |
-| `verify` / `invoke/verify` | **No** | Do not cache "this invocation was valid" — invocations are per request. |
-| GraphQL result / gzip | Not this package | catalog-graphql gzips JSON when `Accept-Encoding: gzip`. Response caching belongs in the wallet or a CDN in front of public catalog data, not in the ZCAP gate. |
-
-Example wrapper a resource server can add **outside** this library:
-
-```ts
-type Entry = { config: ZcapServerConfig; expiresAt: number }
-const tokenCache = new Map<string, Entry>()
-const TOKEN_TTL_MS = 45_000
-
-async function zcapConfigFor(hostname: string): Promise<ZcapServerConfig> {
-  const hit = tokenCache.get(hostname)
-  if (hit && hit.expiresAt > Date.now()) return hit.config
-
-  const config = await tenants.resolveZcapConfig(hostname, {
-    expectedInvocationTarget: process.env.EXPECTED_INVOCATION_TARGET,
-  })
-  if (!config) throw new Error(`no tenant for ${hostname}`)
-  tokenCache.set(hostname, { config, expiresAt: Date.now() + TOKEN_TTL_MS })
-  return config
-}
-```
-
-Evict on agent `401` so a rotated wallet key does not stick. Do not share this cache across processes without considering Traction token scope (it is a tenant wallet token, not a user session).
+There is nothing to cache here that this package owns — no Traction token, no agent round-trip, no DB connection. The one thing worth caching is the caller's own **root-capability lookup** (the `(controller, id, invocationTarget)` DB read) — that's outside this package's scope; see catalog-graphql's own docs for its caching story.
 
 ## unsafeMode
 
@@ -207,6 +157,6 @@ Accepts a structurally valid, unexpired leaf with a matching `allowedAction`, **
 |--------|---------|
 | `CAPABILITY_INVALID` | Missing leaf, bad shape, expired, chain verify failed, target mismatch |
 | `QUERY_NOT_ALLOWED` | Document is not an exact/`subset` match of `allowedAction` |
-| `INVOCATION_INVALID` | Missing invocation, or `invoke/verify` failed |
+| `INVOCATION_INVALID` | Missing invocation, wrong signer, or the invocation proof failed verification |
 
 `decodeInvocationHeader` returns `null` on missing/invalid base64 JSON rather than throwing.
