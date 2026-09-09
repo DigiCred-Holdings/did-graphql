@@ -98,3 +98,21 @@ test('checkIntrospection policy "off" refuses even a valid chain', () => {
 test('checkIntrospection policy "public" allows introspection with no capability', () => {
   assert.deepEqual(checkIntrospection(realConfig, null, '{ __schema { types { name } } }', 'public'), { ok: true })
 })
+
+// --- a caller's `query` comes from a JSON body: it can be anything ---
+
+test('containsSchemaIntrospection returns false for a non-string instead of throwing', () => {
+  for (const value of [undefined, null, 123, {}, [], { query: '__schema' }, ['__schema'], true]) {
+    assert.equal(containsSchemaIntrospection(value as never), false, `threw or matched on ${JSON.stringify(value) ?? 'undefined'}`)
+  }
+})
+
+test('checkIntrospection passes a non-string through rather than crashing the caller', () => {
+  // `{}` as a request body yields query === undefined. This used to
+  // reach `query.includes(...)` and throw a TypeError — an unhandled
+  // rejection in an async request handler, which ends the process.
+  for (const value of [undefined, null, 42, {}, []]) {
+    assert.deepEqual(checkIntrospection(realConfig, null, value as never), { ok: true }, `on ${JSON.stringify(value) ?? 'undefined'}`)
+  }
+})
+
