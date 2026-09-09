@@ -71,6 +71,19 @@ attachResolvers(schema, { ...composed.resolvers, Query: { ...composed.resolvers.
 
 GraphiQL `defaultQuery` is `authModule.defaultQueries[0]` (`AUTH_QUERY`).
 
+### Type names are global
+
+Query *fields* are namespaced (`Query.auth`, `Query.case`), but GraphQL has no namespacing for **type** names — a schema has exactly one flat type registry, and `buildSchema` rejects a duplicate definition outright. Composing these modules therefore claims these names in your schema:
+
+| From | Types |
+|---|---|
+| auth | `AuthQueries`, `Zcap` |
+| case | `CaseQueries`, `CFDocument`, `CFDocumentResults`, `CFItem`, `CFItemResults`, `CFItemTypeCount`, `CFPackage`, `CFAssociation`, `CFAssociationResults`, `CFAssociationEndpoint`, `CFURIReference`, and the `JSON` scalar |
+
+The `CF*` names come from the CASE 1.1 vocabulary and are unlikely to collide. **`JSON` is the one to watch**: plenty of servers define their own `scalar JSON`, and if yours does, `buildSchema` fails on the duplicate. `Zcap` is generic enough to be worth a glance too.
+
+A collision in SDL fails loudly, at startup, which is the safe direction. The quieter hazard is `composeModules`' **resolver** merge, which is keyed by type name and field name and merges rather than errors — `{ ...existing, ...fields }`, last writer wins. Two modules (or a module and your own resolver map) that name the same type *and* the same field on it will silently end up running whichever resolver was spread last. That matters when the shadowed one is the gated one: a field that looks authorized in the SDL can end up wired to a resolver that never calls `checkInvocation`. Namespacing shrank this surface for `Query` to the two namespace markers, but it does not remove it — if you spread your own resolvers over `composed.resolvers`, keep your type and field names distinct from the table above, and treat any overlap as a bug rather than an override.
+
 ## Configuration
 
 ### `ZcapServerConfig`
