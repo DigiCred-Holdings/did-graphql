@@ -75,7 +75,7 @@ Both have a matching `unsafeMode` (client) / `UNSAFE_MODE` (server) — default 
 
 ## Tests
 
-Integration tests under `test/` spin a Credo agent, create two `did:key` identities (issuer + holder), and sign a delegated ZCAP with **eddsa-jcs-2022**. They start with the unsigned diagnostic `query Auth { zcap { valid } }` (`DidGraphQLClient.checkAuth` / server `checkAuthOnly`) — chain shape and expiry only, no invocation signature.
+Integration tests under `test/` spin a Credo agent, create two `did:key` identities (issuer + holder), and sign a delegated ZCAP with **eddsa-jcs-2022**. They start with the unsigned diagnostic `query Auth { auth { zcap { valid } } }` (`DidGraphQLClient.checkAuth` / server `checkAuthOnly`) — chain shape and expiry only, no invocation signature.
 
 ```bash
 npm install

@@ -37,7 +37,7 @@ test('hashEddsaJcs2022 matches CRMS Python fixture byte-for-byte', () => {
 test('createUnsigned + finalize assembles a SignedInvocation', () => {
   const { document, proofOptions, hash } = createUnsignedCapabilityInvocation({
     capabilityId: 'urn:zcap:test',
-    capabilityAction: 'query Auth { zcap { valid } }',
+    capabilityAction: 'query Auth { auth { zcap { valid } } }',
     invocationTarget: 'https://example.com/graphql',
     verificationMethod: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
     created: '2026-01-01T00:00:00Z',

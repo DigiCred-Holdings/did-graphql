@@ -43,7 +43,7 @@ test('client and server share the same AUTH_QUERY', () => {
   assert.equal(authModule.defaultQueries[0], AUTH_QUERY)
 })
 
-test('composed authModule resolves query Auth { zcap { valid } }', async () => {
+test('composed authModule resolves query Auth { auth { zcap { valid } } }', async () => {
   const payload = decodeInvocationHeader(encodeInvocationHeader({ chain: [leaf] }))
   const result = await graphql({
     schema: schemaWithAuth(),
@@ -51,23 +51,25 @@ test('composed authModule resolves query Auth { zcap { valid } }', async () => {
     contextValue: { zcapConfig: unsafeConfig, payload },
   })
   assert.equal(result.errors, undefined)
-  assert.deepEqual(plain(result.data), { zcap: { valid: true } })
+  assert.deepEqual(plain(result.data), { auth: { zcap: { valid: true } } })
 })
 
-test('Query.zcap echoes leaf fields when selected', async () => {
+test('Query.auth.zcap echoes leaf fields when selected', async () => {
   const payload = decodeInvocationHeader(encodeInvocationHeader({ chain: [leaf] }))
   const result = await graphql({
     schema: schemaWithAuth(),
-    source: 'query Auth { zcap { valid controller invocationTarget allowedAction } }',
+    source: 'query Auth { auth { zcap { valid controller invocationTarget allowedAction } } }',
     contextValue: { zcapConfig: unsafeConfig, payload },
   })
   assert.equal(result.errors, undefined)
   assert.deepEqual(plain(result.data), {
-    zcap: {
-      valid: true,
-      controller: leaf.controller,
-      invocationTarget: leaf.invocationTarget,
-      allowedAction: leaf.allowedAction,
+    auth: {
+      zcap: {
+        valid: true,
+        controller: leaf.controller,
+        invocationTarget: leaf.invocationTarget,
+        allowedAction: leaf.allowedAction,
+      },
     },
   })
 })

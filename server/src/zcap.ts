@@ -238,7 +238,7 @@ function presentZcap(
 }
 
 /**
- * GraphQL `Zcap` payload for `query Auth { zcap { valid } }`.
+ * GraphQL `Zcap` payload for `query Auth { auth { zcap { valid } } }`.
  * Leaf fields are echoed even when `valid` is false. `problems` is the
  * structured (typeURI-tagged) form of `reason` — empty when `valid`,
  * or under `unsafeMode` (which never produces ProblemDetails).
@@ -270,7 +270,7 @@ function structuralCheckAuthOnly(payload: InvocationHeaderPayload | null, trust:
 
 // --- real checks: local did:key verification only ---
 
-/** Used by `Query.zcap` (`query Auth { zcap { valid } }`) — chain validity only, no invocation required. */
+/** Used by `Query.auth.zcap` (`query Auth { auth { zcap { valid } } }`) — chain validity only, no invocation required. */
 export function checkAuthOnly(config: ZcapServerConfig, payload: InvocationHeaderPayload | null): PresentedZcap {
   if (config.unsafeMode) return structuralCheckAuthOnly(payload, config.trust)
 

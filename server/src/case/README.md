@@ -22,7 +22,7 @@ attachResolvers(schema, composed.resolvers)
 ```ts
 interface CaseConfig {
   baseUrl: string      // go-case base URL, e.g. https://go-case-digicred-sandbox.up.railway.app
-  packageId: string    // this deployment's default package (Query.cfDocuments/cfPackage/cfItem/... still take any id — see Query fields)
+  packageId: string    // this deployment's default package (Query.case.cfDocuments/cfPackage/cfItem/... still take any id — see Query fields)
   apiKey?: string      // sent as `Authorization: Bearer <key>` if set — go-case's own read routes need no auth (verified against its source), some deployments front it with a key anyway
   ttlMs?: number       // package-fetch cache TTL, default 5 minutes — see Caching
   fetchImpl?: typeof fetch // swap HTTP (tests)

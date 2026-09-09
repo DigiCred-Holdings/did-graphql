@@ -49,7 +49,7 @@ test('validation refuses a ZCAP whose invocationTarget is not the GraphQL endpoi
   assert.throws(() => validateGraphqlZcap(capability), InvalidCapabilityError)
 })
 
-test('DidGraphQLClient.checkAuth sends an unsigned query Auth { zcap { valid } } diagnostic', async () => {
+test('DidGraphQLClient.checkAuth sends an unsigned query Auth { auth { zcap { valid } } } diagnostic', async () => {
   const capability = await delegateGraphqlZcap(agent, issuer, holder)
   let capturedHeader: string | undefined
   let capturedBody: string | undefined
@@ -62,7 +62,7 @@ test('DidGraphQLClient.checkAuth sends an unsigned query Auth { zcap { valid } }
         ? ((init as RequestInit).headers as Record<string, string>)['x-zcap-invocation']
         : undefined
       capturedBody = typeof (init as RequestInit).body === 'string' ? ((init as RequestInit).body as string) : undefined
-      return new Response(JSON.stringify({ data: { zcap: { valid: true } } }), {
+      return new Response(JSON.stringify({ data: { auth: { zcap: { valid: true } } } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
@@ -92,7 +92,7 @@ test('query() signs the invocation for the same URL it actually fetches', async 
     capability,
     fetchImpl: (async (url) => {
       fetchedUrl = String(url)
-      return new Response(JSON.stringify({ data: { zcap: { valid: true } } }), {
+      return new Response(JSON.stringify({ data: { auth: { zcap: { valid: true } } } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })

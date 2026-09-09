@@ -43,7 +43,7 @@ const zcapConfig = configureZcap({
 
 const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'])
 
-// Diagnostic: query Auth { zcap { valid } } — chain only, no invocation.
+// Diagnostic: query Auth { auth { zcap { valid } } } — chain only, no invocation.
 const auth = checkAuthOnly(zcapConfig, payload)
 
 // Real resolver: chain + allowedAction + signed invocation.
@@ -58,10 +58,10 @@ if (!gate.ok) {
 
 ## GraphQL modules
 
-`authModule` and `caseModule()` are `GraphqlModule`s. `composeModules` concatenates SDL, merges Query resolvers, and unions `defaultQueries` (GraphiQL / sandbox `allowedAction`).
+`authModule` and `caseModule()` are `GraphqlModule`s. Each splices exactly one field onto `type Query` — `auth` and `case` — with its own fields on a namespace type behind it, so a host server's own root fields never collide with a module's. `composeModules` concatenates SDL, merges resolvers, and unions `defaultQueries` (GraphiQL / sandbox `allowedAction`).
 
-- **auth** — `query Auth { zcap { valid } }` (`checkAuthOnly`, no invocation).
-- **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) gated by `checkInvocation`. College/Program mapping stays in catalog-graphql. Full field/query reference: [src/case/README.md](src/case/README.md).
+- **auth** — `query Auth { auth { zcap { valid } } }` (`checkAuthOnly`, no invocation), under `Query.auth`.
+- **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) under `Query.case`, gated by `checkInvocation`. College/Program mapping stays in catalog-graphql. Full field/query reference: [src/case/README.md](src/case/README.md).
 
 ```ts
 import { authModule, caseModule, composeModules, attachResolvers } from '@digicred-holdings/did-graphql-server'

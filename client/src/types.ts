@@ -60,7 +60,8 @@ export interface SignedInvocation {
  * delegation chain (leaf first; just `[capability]` when there's no
  * further sub-delegation) plus, for a real invocation, the signed
  * proof that the chain's leaf controller is exercising it right now.
- * `invocation` is absent for the dev-only `Auth { zcap { valid } }` diagnostic —
+ * `invocation` is absent for the dev-only `Auth { auth { zcap { valid } } }`
+ * diagnostic —
  * that's a structural/expiry check on the chain alone, not a real
  * invocation (see `DidGraphQLClient.checkAuth`).
  */
@@ -103,7 +104,8 @@ export interface GraphQLResponse<T = unknown> {
  * Dev diagnostic document (`DidGraphQLClient.checkAuth`). Not a
  * production `allowedAction`. Extra `Zcap` fields (controller,
  * invocationTarget, allowedAction, …) are optional selections on the
- * same type.
+ * same type. Must stay byte-identical to the server package's own
+ * AUTH_QUERY (server/src/auth.ts) — a test asserts it.
  */
-export const AUTH_QUERY = 'query Auth { zcap { valid } }'
+export const AUTH_QUERY = 'query Auth { auth { zcap { valid } } }'
 

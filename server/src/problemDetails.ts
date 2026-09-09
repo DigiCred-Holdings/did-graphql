@@ -105,7 +105,7 @@ export const ACTION_NOT_ALLOWED = problemType(
   "The requested operation is not within the capability's allowedAction.",
 )
 
-/** A real query (not the `zcap { valid }` diagnostic) was made with no capabilityInvocation present. */
+/** A real query (not the `auth { zcap { valid } }` diagnostic) was made with no capabilityInvocation present. */
 export const INVOCATION_MISSING = problemType(
   'error',
   'INVOCATION_MISSING',

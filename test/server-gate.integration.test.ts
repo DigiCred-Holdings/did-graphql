@@ -23,7 +23,7 @@ function unsignedLeaf(overrides: Partial<Capability> = {}): Capability {
   }
 }
 
-test('unsafe checkAuthOnly accepts a structurally valid chain (query Auth { zcap { valid } })', async () => {
+test('unsafe checkAuthOnly accepts a structurally valid chain (query Auth { auth { zcap { valid } } })', async () => {
   const header = encodeInvocationHeader({ chain: [unsignedLeaf()] })
   const result = await checkAuthOnly(unsafeConfig, decodeInvocationHeader(header))
   assert.equal(result.valid, true)

@@ -267,17 +267,17 @@ export class DidGraphQLClient {
   }
 
   /**
-   * Dev-only diagnostic (`query Auth { zcap { valid } }`) — reports
+   * Dev-only diagnostic (`query Auth { auth { zcap { valid } } }`) — reports
    * whether the held capability is structurally valid and unexpired
    * per the resource server. No invocation is signed for this — it's
    * a structural/expiry check on the bare chain, not a real
    * capability use. Not part of the production allowedAction surface.
-   * Select more fields on `zcap` (controller, invocationTarget,
+   * Select more fields on `auth.zcap` (controller, invocationTarget,
    * allowedAction) via `query()` if you need the echo, not just valid.
    */
   async checkAuth(): Promise<boolean> {
     const prepared = prepareDiagnosticRequest(this.capability, { query: AUTH_QUERY })
-    const result = await this.fetchJson<GraphQLResponse<{ zcap: { valid: boolean } }>>(prepared, undefined)
-    return result.data?.zcap?.valid ?? false
+    const result = await this.fetchJson<GraphQLResponse<{ auth: { zcap: { valid: boolean } } }>>(prepared, undefined)
+    return result.data?.auth?.zcap?.valid ?? false
   }
 }

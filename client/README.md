@@ -117,7 +117,7 @@ validateGraphqlZcap(artifacts.zcap.graphql, {
 
 `query(request, { signal })` always signs a **new** invocation whose `capabilityAction` is the query text. That is the string `allowedAction` must match (or contain as a field subset) on the server.
 
-`checkAuth()` POSTs `query Auth { zcap { valid } }` with **no** invocation. Dev/diagnostic only — not a production `allowedAction`. The same `zcap` object can also select `controller`, `invocationTarget`, and `allowedAction`.
+`checkAuth()` POSTs `query Auth { auth { zcap { valid } } }` with **no** invocation. Dev/diagnostic only — not a production `allowedAction`. The same `auth.zcap` object can also select `controller`, `invocationTarget`, and `allowedAction`.
 
 ## Wire format
 
