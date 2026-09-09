@@ -62,6 +62,13 @@ export const PROOF_INVALID = problemType(
   'A proof on the capability or invocation failed cryptographic verification.',
 )
 
+/** The request selects `__schema`/`__type` and the server's introspection policy refuses it — see checkIntrospection. */
+export const INTROSPECTION_NOT_ALLOWED = problemType(
+  'error',
+  'INTROSPECTION_NOT_ALLOWED',
+  'Schema introspection is not allowed for this request.',
+)
+
 /** Nothing in the caller's trusted-root store matches this (controller, id, invocationTarget) — the root controller/target pair isn't a known, trusted root. */
 export const ROOT_CAPABILITY_UNKNOWN = problemType(
   'error',

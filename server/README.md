@@ -125,6 +125,39 @@ Argument **values** (`limit`, `filter`, …) are **not** constrained. A client a
 
 Inline fragments (`... on SomeType`) are walked, as an interface- or union-typed field needs them. Aliased duplicate root fields union their selections.
 
+### What the gate does not cover: schema introspection
+
+`checkInvocation` runs **inside a field resolver**. `__schema` and `__type` are graphql-js built-in meta-fields with no resolver of ours, so a document selecting only those reaches no gated code path and is answered straight from the schema — with no capability present at all. No row of data leaks, but the whole API shape does: every type, field, and argument name, including any administrative surface a host has composed in.
+
+Close it with one call per request, before `graphql()`:
+
+```ts
+import { checkIntrospection } from '@digicred-holdings/did-graphql-server'
+
+const introspection = checkIntrospection(zcapConfig, payload, body.query)
+if (!introspection.ok) {
+  // introspection.code === 'INTROSPECTION_NOT_ALLOWED'
+  return sendJson(200, { data: null, errors: [{ message: introspection.message, extensions: { code: introspection.code } }] })
+}
+```
+
+A document that doesn't introspect always returns `{ ok: true }`, so this is safe to call unconditionally — the per-field gate still does all the real authorization work. Three policies, as the fourth argument:
+
+| Policy | Introspection allowed for |
+|---|---|
+| `authorized` (default) | Any request presenting a structurally valid, unexpired chain for this `invocationTarget` — what `checkAuthOnly` reports. **Not** `allowedAction` membership: no real capability lists GraphiQL's introspection document, and knowing the shape of an API you already hold a capability for discloses strictly less than the data behind it. In `unsafeMode` this accepts the same structural check everything else does, so a dev GraphiQL page keeps working. |
+| `public` | Everyone. The behavior before this existed — correct for an intentionally public schema. |
+| `off` | Nobody, capability or not. |
+
+`containsSchemaIntrospection(query)` is exported separately if you want the predicate without the policy. It follows aliases (`{ s: __schema { … } }`), inline fragments, and **named fragment spreads** — introspection hidden a hop away in a fragment is the case a naive string or root-field check misses:
+
+```graphql
+query Q { ...F }
+fragment F on Query { __schema { types { name } } }
+```
+
+`__typename` is not treated as introspection: it discloses only the type of something the caller already selected, the same reason `matchesAllowedAction` ignores it.
+
 ## Problem details
 
 Every rejection reason is a `ProblemDetail` (`{ typeURI, title, detail }`), drawn from a fixed vocabulary in `problemDetails.ts`:

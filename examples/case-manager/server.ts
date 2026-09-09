@@ -39,6 +39,7 @@ import {
   CASE_DEFAULT_QUERIES,
   caseModule,
   composeModules,
+  checkIntrospection,
   configureZcap,
   decodeInvocationHeader,
 } from '../../server/src/index.js'
@@ -159,6 +160,18 @@ async function main() {
     if (!verification.ok) {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ errors: [{ message: verification.reason, extensions: { code: 'CAPABILITY_INVALID' } }], data: null }))
+      return
+    }
+
+    // Schema introspection reaches no gated resolver — __schema/__type
+    // are graphql-js built-ins — so without this a capability-less
+    // request could read the whole schema. Default policy accepts any
+    // structurally valid chain (which unsafeMode's own check is), so
+    // the GraphiQL page above keeps working.
+    const introspection = checkIntrospection(zcapConfig, payload, body.query)
+    if (!introspection.ok) {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ errors: [{ message: introspection.message, extensions: { code: introspection.code } }], data: null }))
       return
     }
 
