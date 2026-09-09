@@ -62,11 +62,11 @@ if (!gate.ok) {
 - **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) under `Query.case`, gated by `checkInvocation`. Any opinionated shape over that vocabulary stays in the consuming server. Full field/query reference: [src/case/README.md](src/case/README.md).
 
 ```ts
-import { authModule, caseModule, composeModules, attachResolvers } from '@digicred-holdings/did-graphql-server'
+import { authModule, caseModule, composeModules, mergeResolvers, attachResolvers } from '@digicred-holdings/did-graphql-server'
 
 const composed = composeModules([authModule, caseModule()])
-const schema = buildSchema(`${catalogTypeDefs}\n${composed.sdl}`) // or splice queryFields into your Query
-attachResolvers(schema, { ...composed.resolvers, Query: { ...composed.resolvers.Query, ...catalogQuery } })
+const schema = buildSchema(`${myTypeDefs}\n${composed.sdl}`) // or splice queryFields into your Query
+attachResolvers(schema, mergeResolvers(composed.resolvers, { Query: myQueryResolvers }))
 ```
 
 GraphiQL `defaultQuery` is `authModule.defaultQueries[0]` (`AUTH_QUERY`).
@@ -82,7 +82,23 @@ Query *fields* are namespaced (`Query.auth`, `Query.case`), but GraphQL has no n
 
 The `CF*` names come from the CASE 1.1 vocabulary and are unlikely to collide. **`JSON` is the one to watch**: plenty of servers define their own `scalar JSON`, and if yours does, `buildSchema` fails on the duplicate. `Zcap` is generic enough to be worth a glance too.
 
-A collision in SDL fails loudly, at startup, which is the safe direction. The quieter hazard is `composeModules`' **resolver** merge, which is keyed by type name and field name and merges rather than errors — `{ ...existing, ...fields }`, last writer wins. Two modules (or a module and your own resolver map) that name the same type *and* the same field on it will silently end up running whichever resolver was spread last. That matters when the shadowed one is the gated one: a field that looks authorized in the SDL can end up wired to a resolver that never calls `checkInvocation`. Namespacing shrank this surface for `Query` to the two namespace markers, but it does not remove it — if you spread your own resolvers over `composed.resolvers`, keep your type and field names distinct from the table above, and treat any overlap as a bug rather than an override.
+A collision in SDL fails loudly, at startup, which is the safe direction.
+
+### Resolver collisions throw, they don't merge
+
+The quieter hazard used to be the **resolver** merge. Resolver maps are keyed by type name and field name, and merging them with spreads (`{ ...existing, ...fields }`) means last writer wins: two modules, or a module and your own map, naming the same type *and* field would silently run whichever came last. That matters when the loser is the gated one — the SDL still advertises a gated field while the wired resolver never calls `checkInvocation`, and unlike most wiring mistakes this one fails *open*, with data flowing and nothing logged.
+
+`composeModules` now refuses it, and `mergeResolvers` is exported for merging your own maps against a module's:
+
+```ts
+mergeResolvers(composed.resolvers, { Query: myQueryResolvers })
+// ResolverCollisionError: map #2 redeclares Query.case, already provided by module 'case' —
+// a silently shadowed resolver can drop an authorization check; merge deliberately if you meant to override it
+```
+
+Adding your own *distinct* fields to a type a module also resolves is fine — only a same-type-same-field overlap throws. Pass `{ label, resolvers }` instead of a bare map to get your own name in the message. A deliberate override is still possible by spreading by hand; it just has to be deliberate.
+
+This is worth caring about most when a single resolver carries a whole surface's authorization. Hoisting a ZCAP check onto a namespace field (`catalog: async (…) => { await requireAuthorizedQuery(…); return {} }`, with no per-field checks underneath) is a real simplification — one check, impossible to forget on a new field — but it also means shadowing that one resolver ungates every field behind it at once. If you do that, a test that runs an unauthorized document through the composed schema and asserts it is refused is the cheap way to notice.
 
 ## Configuration
 

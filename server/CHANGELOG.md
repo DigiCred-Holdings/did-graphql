@@ -12,6 +12,8 @@
 
   **This is opt-in for existing consumers**: nothing changes until a host adds the call. A server that wants the old behavior explicitly can pass `'public'`.
 
+- `composeModules` now throws `ResolverCollisionError` when two modules declare a resolver for the same type *and* field, instead of silently letting the last one win, and a new exported `mergeResolvers(...maps)` does the same for a host merging its own resolver map against a module's. A shadowed resolver is a silent, fail-*open* way to lose an authorization check: the SDL still advertises a gated field while the wired resolver never calls `checkInvocation`. Adding distinct fields to a type a module also resolves is unaffected; only a same-type-same-field overlap throws. Pass `{ label, resolvers }` for a named source in the error message.
+
 - 9bca076: **Breaking:** the auth module's `zcap` field is now namespaced under `Query.auth` (a new `AuthQueries` type) instead of a flat root field, matching the CASE module's own move to `Query.case`. Each module now splices exactly one field onto the host's `type Query`, so a resource server's own root fields can never collide with a module's.
 
   `AUTH_QUERY` — exported by both packages, and asserted identical by a test — becomes `query Auth { auth { zcap { valid } } }`. `DidGraphQLClient.checkAuth()` reads `data.auth.zcap.valid` accordingly; its return type is unchanged, so callers of `checkAuth()` need no edit.
