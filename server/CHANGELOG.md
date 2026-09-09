@@ -1,5 +1,15 @@
 # @digicred-holdings/did-graphql-server
 
+## 0.5.1
+
+### Patch Changes
+
+- 4d79842: `containsSchemaIntrospection` and `checkIntrospection` no longer throw on a non-string `query`.
+
+  0.5.0 added a substring precheck that skipped the parse for documents that cannot introspect — a real saving, since a host following the README calls this on every request. But it sat outside the `try/catch` that had made a bad input safe, so `query.includes('__schema')` threw a TypeError for anything that wasn't a string. A caller's `query` comes from a JSON body, where `{}` yields `undefined`: in an async request handler that TypeError is an unhandled rejection, which ends the **process**, not the request. One malformed body was enough to take a server down.
+
+  Both functions now return `false` / `{ ok: true }` for a non-string, since a non-string is not a document and cannot select anything; their parameters are typed `unknown` to match what a caller actually has. This is defense in depth, not a substitute for validating the body — the README's introspection section now spells out the check a host still owes, and the example server does it.
+
 ## 0.5.0
 
 ### Minor Changes
@@ -12,7 +22,7 @@
 
   **This is opt-in for existing consumers**: nothing changes until a host adds the call. A server that wants the old behavior explicitly can pass `'public'`.
 
-- `composeModules` now throws `ResolverCollisionError` when two modules declare a resolver for the same type *and* field, instead of silently letting the last one win, and a new exported `mergeResolvers(...maps)` does the same for a host merging its own resolver map against a module's. A shadowed resolver is a silent, fail-*open* way to lose an authorization check: the SDL still advertises a gated field while the wired resolver never calls `checkInvocation`. Collisions are: the same field on the same type, the same custom scalar twice, and a type declared as a custom scalar by one map and as field resolvers by another (either order). Adding distinct fields to a type a module also resolves is unaffected. Pass `{ label, resolvers }` for a named source in the error message.
+- `composeModules` now throws `ResolverCollisionError` when two modules declare a resolver for the same type _and_ field, instead of silently letting the last one win, and a new exported `mergeResolvers(...maps)` does the same for a host merging its own resolver map against a module's. A shadowed resolver is a silent, fail-_open_ way to lose an authorization check: the SDL still advertises a gated field while the wired resolver never calls `checkInvocation`. Collisions are: the same field on the same type, the same custom scalar twice, and a type declared as a custom scalar by one map and as field resolvers by another (either order). Adding distinct fields to a type a module also resolves is unaffected. Pass `{ label, resolvers }` for a named source in the error message.
 
 - 9bca076: **Breaking:** the auth module's `zcap` field is now namespaced under `Query.auth` (a new `AuthQueries` type) instead of a flat root field, matching the CASE module's own move to `Query.case`. Each module now splices exactly one field onto the host's `type Query`, so a resource server's own root fields can never collide with a module's.
 
