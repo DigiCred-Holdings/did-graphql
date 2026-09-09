@@ -292,3 +292,21 @@ test('cfAssociations().originNodeURI.item resolves the full CFItem by identifier
     assert.deepEqual(item.originNodeURI.item.extensions, { 'ext:ctdl': { subject: ['Business & Leadership'] } })
   }
 })
+
+test('a query giving neither packageId nor framework fails PACKAGE_ID_REQUIRED when no default is configured', async () => {
+  const { resolvePackageId } = await import('../server/src/case/queries.js')
+  await assert.rejects(
+    () => resolvePackageId({ baseUrl: 'https://case.invalid' }, {}),
+    (err: unknown) => {
+      assert.match(String((err as Error).message), /no packageId or framework given/)
+      assert.equal((err as { extensions?: Record<string, unknown> }).extensions?.['code'], 'PACKAGE_ID_REQUIRED')
+      return true
+    },
+  )
+})
+
+test('an explicit packageId, or a configured default, still resolves', async () => {
+  const { resolvePackageId } = await import('../server/src/case/queries.js')
+  assert.equal(await resolvePackageId({ baseUrl: 'https://case.invalid' }, { packageId: 'given' }), 'given')
+  assert.equal(await resolvePackageId({ baseUrl: 'https://case.invalid', packageId: 'default' }, {}), 'default')
+})

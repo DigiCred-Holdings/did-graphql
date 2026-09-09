@@ -27,6 +27,11 @@ see what frameworks exist on your server, then
 `case { cfItemTypes }`/`case { cfItems }` with a framework title (or
 one of the `identifier`s you just saw) from there.
 
+There is no default-package setting. `CaseConfig.packageId` exists for
+a server that reads one framework by default; this example is a browser
+instead, so every query names its own `framework` or `packageId`, and
+one giving neither fails with `PACKAGE_ID_REQUIRED` saying so.
+
 ### Or with Docker
 
 Build **from the repo root**, not this directory — the example imports
@@ -53,7 +58,6 @@ else to work.
 |---|---|---|
 | `CASE_SERVER_URL` | **required** | Base URL of the go-case server to query. No default — the process exits if it's unset |
 | `CASE_SERVER_API_KEY` | unset | Sent as `Authorization: Bearer <key>` — go-case's own read routes need no auth (verified against its source), some deployments front it with one anyway |
-| `CASE_PACKAGE_ID` | unset | This deployment's default package — only matters for a query that omits both `packageId` and `framework`. Use `case { cfDocuments }` to find ids on your server |
 | `CONTROLLER_SEED` | unset | See below |
 | `PORT` | `4321` | |
 

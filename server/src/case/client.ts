@@ -9,7 +9,16 @@
 
 export interface CaseConfig {
   baseUrl: string
-  packageId: string
+  /**
+   * Default package for a query that gives neither packageId nor
+   * framework. Optional, and better left unset: an implicit default
+   * makes a query's answer depend on server config rather than on the
+   * query, which is why a query giving neither now fails with
+   * PACKAGE_ID_REQUIRED instead of quietly reading whatever this
+   * points at. Prefer naming `framework`/`packageId` per query — this
+   * stays for servers built around one framework.
+   */
+  packageId?: string
   /** Optional — go-case's own read routes need no auth (verified against its source), but some deployments front it with a key anyway. Sent as `Authorization: Bearer <key>` if set. */
   apiKey?: string
   /** How long to keep a fetched package before re-fetching. Defaults to 5 minutes. */
@@ -203,10 +212,11 @@ async function fetchCFPackage(config: CaseConfig, packageId: string): Promise<CF
   return pkg
 }
 
-/** The package this service is configured against (CASE_PACKAGE_ID). Throws if missing. */
+/** The default package this config names (`CaseConfig.packageId`). Throws if unset or not found on the server. */
 export async function getCasePackage(config: CaseConfig): Promise<CFPackage> {
+  if (!config.packageId) throw new Error(`CaseConfig.packageId is not set — no default package to fetch from ${config.baseUrl}`)
   const pkg = await fetchCFPackage(config, config.packageId)
-  if (!pkg) throw new Error(`configured CASE_PACKAGE_ID "${config.packageId}" not found on ${config.baseUrl}`)
+  if (!pkg) throw new Error(`configured CaseConfig.packageId "${config.packageId}" not found on ${config.baseUrl}`)
   return pkg
 }
 

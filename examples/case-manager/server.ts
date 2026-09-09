@@ -20,13 +20,12 @@
  * Config:
  *   CASE_SERVER_URL      REQUIRED — base URL of the go-case server to query. There is no default: this example ships with no server of its own to point at, so bring your own (a local go-case run, or any instance you have access to).
  *   CASE_SERVER_API_KEY  sent as Authorization: Bearer <key> — go-case's own read routes need no auth (verified against its source), some deployments front it with one anyway
- *   CASE_PACKAGE_ID      optional default package — only matters for a query that omits both packageId and framework. Run `case { cfDocuments { items { identifier title } } }` against your server to find ids.
  *   CONTROLLER_SEED      if set, the demo capability is signed for real (eddsa-jcs-2022, via a did:key deterministically derived from this seed with Askar) instead of the unsigned placeholder — see controllerCapability.ts
  *   PORT                 default 4321
  *
  * Usage:
  *   CASE_SERVER_URL=https://your-go-case-instance npx tsx examples/case-manager/server.ts
- *   CASE_SERVER_URL=... CASE_SERVER_API_KEY=... CASE_PACKAGE_ID=... npx tsx examples/case-manager/server.ts
+ *   CASE_SERVER_URL=... CASE_SERVER_API_KEY=... npx tsx examples/case-manager/server.ts
  *   CASE_SERVER_URL=... CONTROLLER_SEED=any-string-you-like npx tsx examples/case-manager/server.ts
  */
 
@@ -64,11 +63,14 @@ if (!CASE_SERVER_URL) {
   process.exit(1)
 }
 
+// No default package on purpose. CaseConfig.packageId exists for a
+// server that reads one framework by default, which this example is
+// not: it is a browser, and you cannot know an id before listing
+// `case { cfDocuments }` — which needs the server already running.
+// Queries here name their own framework or packageId, and one giving
+// neither fails with PACKAGE_ID_REQUIRED saying exactly that.
 const caseConfig = {
   baseUrl: CASE_SERVER_URL,
-  // Optional: only consulted by a query that omits both packageId and
-  // framework. Browse `case { cfDocuments }` to find ids on your server.
-  packageId: process.env['CASE_PACKAGE_ID'] ?? '',
   apiKey: process.env['CASE_SERVER_API_KEY'] || undefined,
 }
 
@@ -196,6 +198,9 @@ async function main() {
     )
     console.log(
       '[UNSAFE_MODE] did-graphql-server\'s own allowedAction/expiry gate still skips signature verification — see the package README before using this pattern anywhere real.\n',
+    )
+    console.log(
+      'No default package: every query names its own framework or packageId, and one giving neither fails with PACKAGE_ID_REQUIRED. Start with case { cfDocuments { items { identifier title } } } to see what this server hosts.',
     )
     console.log(
       `Open ${GRAPHQL_ENDPOINT} in a browser for a GraphiQL explorer — the x-zcap-invocation header and a default query are pre-filled, so it works immediately. Try case.cfDocuments first to see what frameworks exist on this server, then case.cfItemTypes/cfItems with a framework title you find there.`,

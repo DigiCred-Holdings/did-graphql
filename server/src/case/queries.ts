@@ -51,7 +51,18 @@ export async function resolvePackageId(
   config: CaseConfig,
   opts: { packageId?: string; framework?: string },
 ): Promise<string> {
-  return opts.packageId ?? (opts.framework ? await resolveFrameworkPackageId(config, opts.framework) : config.packageId)
+  if (opts.packageId) return opts.packageId
+  if (opts.framework) return resolveFrameworkPackageId(config, opts.framework)
+  // Without this, an unset CaseConfig.packageId resolves to ''/undefined
+  // and the request goes out as `/CFPackages/`, surfacing as a confusing
+  // `CASE package "" not found` several layers from the real cause.
+  if (!config.packageId) {
+    throw new GraphQLError(
+      'no packageId or framework given, and this server has no default CaseConfig.packageId configured — pass one, or query case { cfDocuments } to discover framework ids',
+      { extensions: { code: 'PACKAGE_ID_REQUIRED' } },
+    )
+  }
+  return config.packageId
 }
 
 export interface CFItemTypeCount {

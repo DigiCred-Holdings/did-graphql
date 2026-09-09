@@ -22,7 +22,7 @@ attachResolvers(schema, composed.resolvers)
 ```ts
 interface CaseConfig {
   baseUrl: string      // go-case base URL, e.g. https://case.example.org
-  packageId: string    // this deployment's default package (Query.case.cfDocuments/cfPackage/cfItem/... still take any id — see Query fields)
+  packageId?: string   // optional default package, used only by a query giving neither packageId nor framework (those fail PACKAGE_ID_REQUIRED without it). Query.case.cfDocuments/cfPackage/cfItem/... still take any id — see Query fields
   apiKey?: string      // sent as `Authorization: Bearer <key>` if set — go-case's own read routes need no auth (verified against its source), some deployments front it with a key anyway
   ttlMs?: number       // package-fetch cache TTL, default 5 minutes — see Caching
   fetchImpl?: typeof fetch // swap HTTP (tests)
