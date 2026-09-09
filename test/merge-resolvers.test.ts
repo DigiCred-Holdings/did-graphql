@@ -99,3 +99,47 @@ test('a host adding its own distinct fields to a module type still works', () =>
   assert.equal(typeof (merged['Query'] as Record<string, unknown>)['myOwnField'], 'function')
   assert.equal(typeof (merged['Query'] as Record<string, unknown>)['case'], 'function')
 })
+
+// --- review findings: labeled-entry detection and type-kind collisions ---
+
+test('a plain map with GraphQL types named `label`/`resolvers` is not mistaken for a labeled entry', () => {
+  const plain = { label: { a: () => 1 }, resolvers: { b: () => 2 } }
+  const merged = mergeResolvers(plain, { Other: { c: () => 3 } })
+  // Read as type names, not as a { label, resolvers } wrapper.
+  assert.deepEqual(Object.keys(merged).sort(), ['Other', 'label', 'resolvers'])
+  assert.equal(typeof (merged['label'] as Record<string, unknown>)['a'], 'function')
+})
+
+test('a labeled entry still needs a string label to be treated as one', () => {
+  // `label` present but not a string -> plain map.
+  const merged = mergeResolvers({ label: { a: () => 1 } }, { resolvers: { b: () => 2 } })
+  assert.deepEqual(Object.keys(merged).sort(), ['label', 'resolvers'])
+})
+
+test('declaring a type as a custom scalar after field resolvers throws instead of replacing them', () => {
+  assert.throws(
+    () => mergeResolvers({ Thing: { a: () => 1 } }, { Thing: new GraphQLScalarType({ name: 'Thing' }) }),
+    (err: unknown) => {
+      assert.ok(err instanceof ResolverCollisionError)
+      assert.match((err as Error).message, /declares Thing as a custom scalar, but map #1 already declared field resolvers on it/)
+      return true
+    },
+  )
+})
+
+test('declaring field resolvers on a type already merged as a custom scalar throws too', () => {
+  assert.throws(
+    () => mergeResolvers({ JSON: new GraphQLScalarType({ name: 'JSON' }) }, { JSON: { a: () => 1 } }),
+    (err: unknown) => {
+      assert.ok(err instanceof ResolverCollisionError)
+      assert.match((err as Error).message, /declares field resolvers on JSON, but map #1 already declared it as a custom scalar/)
+      return true
+    },
+  )
+})
+
+test('a real module scalar cannot be replaced by a host field map, in either order', () => {
+  const composed = composeModules([authModule, caseModule()])
+  assert.throws(() => mergeResolvers(composed.resolvers, { JSON: { serialize: () => 1 } }), ResolverCollisionError)
+  assert.throws(() => mergeResolvers({ JSON: { serialize: () => 1 } }, composed.resolvers), ResolverCollisionError)
+})

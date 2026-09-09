@@ -60,6 +60,15 @@ function selectsIntrospection(
  * executor.
  */
 export function containsSchemaIntrospection(query: string): boolean {
+  // A field name can't be built dynamically in a GraphQL document, so a
+  // document whose text contains neither name cannot select either
+  // field, and the parse is pure cost — worth skipping, since a host
+  // following the README calls this on every request and graphql-js
+  // parses again during execution. Only ever a false positive: any
+  // document with `__typename` contains `__type` and still gets parsed,
+  // as does one merely mentioning `"__schema"` in a string argument.
+  if (!query.includes('__schema') && !query.includes('__type')) return false
+
   let doc: DocumentNode
   try {
     doc = parse(query)

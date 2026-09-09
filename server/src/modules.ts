@@ -48,18 +48,62 @@ export class ResolverCollisionError extends Error {}
  * `label` names each map in the error message ("module 'case'", "map
  * #2"), so a collision says which two sources disagreed.
  */
-export function mergeResolvers(...maps: (ResolverMap | { label: string; resolvers: ResolverMap })[]): ResolverMap {
+export interface LabeledResolvers {
+  label: string
+  resolvers: ResolverMap
+}
+
+/**
+ * A `ResolverMap`'s own values are objects or `GraphQLScalarType`s,
+ * never strings, so a string `label` is what distinguishes a labeled
+ * entry from a plain map that happens to have GraphQL types named
+ * `label` and `resolvers`. Checking key presence alone would misread
+ * such a map and merge the wrong thing.
+ */
+function isLabeledResolvers(entry: ResolverMap | LabeledResolvers): entry is LabeledResolvers {
+  const candidate = entry as Partial<LabeledResolvers>
+  return (
+    typeof candidate.label === 'string' &&
+    typeof candidate.resolvers === 'object' &&
+    candidate.resolvers !== null &&
+    !(candidate.resolvers instanceof GraphQLScalarType)
+  )
+}
+
+/** Who provided a type name so far, and as what. */
+type TypeOwner =
+  | { kind: 'scalar'; label: string }
+  /** fieldName -> label of whoever provided it */
+  | { kind: 'fields'; fields: Map<string, string> }
+
+/**
+ * Merge resolver maps, refusing any collision on the same type.
+ *
+ * Use this instead of spreading maps together — `{ ...composed.resolvers,
+ * Query: { ...composed.resolvers.Query, ...mine } }` silently lets the
+ * last spread win, which is the footgun above. A deliberate override
+ * is still possible by spreading by hand; it just has to be deliberate.
+ *
+ * Three things collide: the same field on the same type, the same
+ * custom scalar twice, and a type declared as a custom scalar by one
+ * map and as field resolvers by another (either order) — that last one
+ * would otherwise drop a whole resolver entry, scalar or object,
+ * without a word.
+ *
+ * Pass `{ label, resolvers }` to name a source in the error message
+ * ("module 'case'"); a bare map is named by position ("map #2").
+ */
+export function mergeResolvers(...maps: (ResolverMap | LabeledResolvers)[]): ResolverMap {
   const out: ResolverMap = {}
-  /** typeName -> fieldName -> label of whoever provided it */
-  const provenance = new Map<string, Map<string, string>>()
+  const provenance = new Map<string, TypeOwner>()
 
   maps.forEach((entry, index) => {
-    const isLabeled = 'label' in entry && 'resolvers' in entry
-    const label = isLabeled ? (entry as { label: string }).label : `map #${index + 1}`
-    const map = isLabeled ? (entry as { resolvers: ResolverMap }).resolvers : (entry as ResolverMap)
+    const labeled = isLabeledResolvers(entry)
+    const label = labeled ? entry.label : `map #${index + 1}`
+    const map = labeled ? entry.resolvers : entry
 
     for (const [typeName, fields] of Object.entries(map)) {
-      const owners = provenance.get(typeName) ?? new Map<string, string>()
+      const owner = provenance.get(typeName)
 
       // A GraphQLScalarType resolver entry (e.g. JSON) is a real class
       // instance — spreading it into a plain object loses its prototype
@@ -69,32 +113,42 @@ export function mergeResolvers(...maps: (ResolverMap | { label: string; resolver
       // skip wiring serialize/parseValue/parseLiteral onto the schema.
       // Keep the instance as-is instead of merging into it.
       if (fields instanceof GraphQLScalarType) {
-        const previous = owners.get('*scalar*')
-        if (previous) {
+        if (owner) {
           throw new ResolverCollisionError(
-            `${label} redeclares the custom scalar ${typeName}, already provided by ${previous}`,
+            owner.kind === 'scalar'
+              ? `${label} redeclares the custom scalar ${typeName}, already provided by ${owner.label}`
+              : `${label} declares ${typeName} as a custom scalar, but ${[...owner.fields.values()][0]} already ` +
+                'declared field resolvers on it',
           )
         }
-        owners.set('*scalar*', label)
-        provenance.set(typeName, owners)
+        provenance.set(typeName, { kind: 'scalar', label })
         out[typeName] = fields
         continue
       }
 
+      if (owner?.kind === 'scalar') {
+        throw new ResolverCollisionError(
+          `${label} declares field resolvers on ${typeName}, but ${owner.label} already declared it as a custom scalar`,
+        )
+      }
+
+      const fieldOwners = owner?.fields ?? new Map<string, string>()
       for (const fieldName of Object.keys(fields)) {
-        const previous = owners.get(fieldName)
+        const previous = fieldOwners.get(fieldName)
         if (previous) {
           throw new ResolverCollisionError(
             `${label} redeclares ${typeName}.${fieldName}, already provided by ${previous} — ` +
               'a silently shadowed resolver can drop an authorization check; merge deliberately if you meant to override it',
           )
         }
-        owners.set(fieldName, label)
+        fieldOwners.set(fieldName, label)
       }
-      provenance.set(typeName, owners)
+      provenance.set(typeName, { kind: 'fields', fields: fieldOwners })
 
+      // The scalar-vs-fields case threw above, so anything already here
+      // is a plain field map.
       const existing = out[typeName]
-      out[typeName] = { ...(existing instanceof GraphQLScalarType ? undefined : existing), ...fields }
+      out[typeName] = { ...(existing instanceof GraphQLScalarType ? {} : existing), ...fields }
     }
   })
 

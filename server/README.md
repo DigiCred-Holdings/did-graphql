@@ -96,7 +96,7 @@ mergeResolvers(composed.resolvers, { Query: myQueryResolvers })
 // a silently shadowed resolver can drop an authorization check; merge deliberately if you meant to override it
 ```
 
-Adding your own *distinct* fields to a type a module also resolves is fine — only a same-type-same-field overlap throws. Pass `{ label, resolvers }` instead of a bare map to get your own name in the message. A deliberate override is still possible by spreading by hand; it just has to be deliberate.
+Three things collide: the same field on the same type, the same custom scalar twice, and a type one map declares as a custom scalar while another declares field resolvers on it (either order — that last one would otherwise drop a whole resolver entry without a word). Adding your own *distinct* fields to a type a module also resolves is fine. Pass `{ label, resolvers }` instead of a bare map to get your own name in the message — a string `label` is what distinguishes it from a map with types of those names. A deliberate override is still possible by spreading by hand; it just has to be deliberate.
 
 This is worth caring about most when a single resolver carries a whole surface's authorization. Hoisting a ZCAP check onto a namespace field (`catalog: async (…) => { await requireAuthorizedQuery(…); return {} }`, with no per-field checks underneath) is a real simplification — one check, impossible to forget on a new field — but it also means shadowing that one resolver ungates every field behind it at once. If you do that, a test that runs an unauthorized document through the composed schema and asserts it is refused is the cheap way to notice.
 
