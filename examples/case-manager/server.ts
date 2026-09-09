@@ -7,7 +7,7 @@
  * explorer and every one of the module's own default queries already
  * registered as this demo capability's allowedAction — so you can
  * browse frameworks, item types, and items (with their extensions)
- * immediately, against any go-case server you point it at.
+ * immediately, against whichever go-case server you point it at.
  *
  * Still unsafeMode against did-graphql-server's own gate. But when
  * CONTROLLER_SEED is set, the
@@ -17,18 +17,17 @@
  * (not a replacement for) did-graphql-server's own allowedAction
  * gating, which keeps running exactly as configured either way.
  *
- * Config (all optional — defaults point at the real go-case sandbox
- * this repo has been developed against):
- *   CASE_SERVER_URL      go-case base URL
+ * Config:
+ *   CASE_SERVER_URL      REQUIRED — base URL of the go-case server to query. There is no default: this example ships with no server of its own to point at, so bring your own (a local go-case run, or any instance you have access to).
  *   CASE_SERVER_API_KEY  sent as Authorization: Bearer <key> — go-case's own read routes need no auth (verified against its source), some deployments front it with one anyway
- *   CASE_PACKAGE_ID      this deployment's default package — only matters for a query that omits both packageId and framework
+ *   CASE_PACKAGE_ID      optional default package — only matters for a query that omits both packageId and framework. Run `case { cfDocuments { items { identifier title } } }` against your server to find ids.
  *   CONTROLLER_SEED      if set, the demo capability is signed for real (eddsa-jcs-2022, via a did:key deterministically derived from this seed with Askar) instead of the unsigned placeholder — see controllerCapability.ts
  *   PORT                 default 4321
  *
  * Usage:
- *   npx tsx examples/case-manager/server.ts
- *   CASE_SERVER_URL=https://your-go-case-instance CASE_SERVER_API_KEY=... npx tsx examples/case-manager/server.ts
- *   CONTROLLER_SEED=any-string-you-like npx tsx examples/case-manager/server.ts
+ *   CASE_SERVER_URL=https://your-go-case-instance npx tsx examples/case-manager/server.ts
+ *   CASE_SERVER_URL=... CASE_SERVER_API_KEY=... CASE_PACKAGE_ID=... npx tsx examples/case-manager/server.ts
+ *   CASE_SERVER_URL=... CONTROLLER_SEED=any-string-you-like npx tsx examples/case-manager/server.ts
  */
 
 import http from 'node:http'
@@ -51,9 +50,24 @@ import { verifyRequestCapability } from './verifyRequestCapability.js'
 const PORT = process.env['PORT'] ? Number(process.env['PORT']) : 4321
 const GRAPHQL_ENDPOINT = `http://localhost:${PORT}/graphql`
 
+// No default server: whichever go-case instance you have is the one
+// this should talk to, and a wrong-but-present default would fail as a
+// confusing 404 on the first query instead of here.
+const CASE_SERVER_URL = process.env['CASE_SERVER_URL']
+if (!CASE_SERVER_URL) {
+  console.error(
+    'CASE_SERVER_URL is required — the base URL of a go-case server to query, e.g.\n' +
+      '  CASE_SERVER_URL=https://your-go-case-instance npx tsx examples/case-manager/server.ts\n' +
+      'See examples/case-manager/README.md.',
+  )
+  process.exit(1)
+}
+
 const caseConfig = {
-  baseUrl: process.env['CASE_SERVER_URL'] ?? 'https://go-case-digicred-sandbox.up.railway.app',
-  packageId: process.env['CASE_PACKAGE_ID'] ?? 'd27a0443-8155-530c-8858-6011014101df', // a framework the default sandbox server hosts
+  baseUrl: CASE_SERVER_URL,
+  // Optional: only consulted by a query that omits both packageId and
+  // framework. Browse `case { cfDocuments }` to find ids on your server.
+  packageId: process.env['CASE_PACKAGE_ID'] ?? '',
   apiKey: process.env['CASE_SERVER_API_KEY'] || undefined,
 }
 

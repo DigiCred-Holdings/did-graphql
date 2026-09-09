@@ -83,4 +83,4 @@ npm test
 
 ## Examples
 
-[`examples/case-manager`](examples/case-manager) — a sample GraphQL server for CASE framework data: `composeModules([caseModule()])` behind a real `http.createServer(...)`, with a built-in GraphiQL explorer. `npx tsx examples/case-manager/server.ts`, no credentials needed by default — set `CONTROLLER_SEED` for a real `eddsa-jcs-2022`-signed capability instead of the unsigned placeholder.
+[`examples/case-manager`](examples/case-manager) — a sample GraphQL server for CASE framework data: `composeModules([caseModule()])` behind a real `http.createServer(...)`, with a built-in GraphiQL explorer. Point it at a go-case server with `CASE_SERVER_URL` (the one required setting; no credentials needed otherwise) and set `CONTROLLER_SEED` for a real `eddsa-jcs-2022`-signed capability instead of the unsigned placeholder.
