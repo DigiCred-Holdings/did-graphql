@@ -157,7 +157,17 @@ if (!introspection.ok) {
 }
 ```
 
-A document that doesn't introspect always returns `{ ok: true }`, so this is safe to call unconditionally — the per-field gate still does all the real authorization work. Three policies, as the fourth argument:
+A document that doesn't introspect always returns `{ ok: true }`, so this is safe to call unconditionally — the per-field gate still does all the real authorization work.
+
+Validate `query` first, though. A JSON body yields whatever the client sent: `{}` gives you `undefined`, and `{"query": 123}` gives you a number. This function tolerates a non-string (it answers `false`/`{ ok: true }` rather than throwing, since a non-string is not a document), but your own handler still has to reject it — otherwise it reaches `graphql()` as a bad `source`, and any throw inside an async request handler is an unhandled rejection that ends the process rather than the request:
+
+```ts
+if (typeof body.query !== 'string' || body.query.trim() === '') {
+  return sendJson(400, { error: 'body.query must be a non-empty string' })
+}
+```
+
+Three policies, as the fourth argument:
 
 | Policy | Introspection allowed for |
 |---|---|

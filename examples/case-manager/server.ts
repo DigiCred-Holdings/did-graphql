@@ -144,14 +144,30 @@ async function main() {
       return
     }
 
-    let body: { query: string; variables?: Record<string, unknown> }
+    let parsed: unknown
     try {
-      body = JSON.parse(await readBody(req))
+      parsed = JSON.parse(await readBody(req))
     } catch {
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'invalid JSON body' }))
       return
     }
+
+    // `null`, `"str"`, `7` and `[]` are all valid JSON, and reading a
+    // property off the first of those throws — so narrow to an object
+    // before touching it, then check `query` itself: `{}` yields
+    // undefined, `{"query": 7}` a number, and everything downstream
+    // (the introspection precheck, graphql's parse) wants a string.
+    const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as {
+      query?: unknown
+      variables?: Record<string, unknown>
+    }
+    if (typeof body.query !== 'string' || body.query.trim() === '') {
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: 'body.query must be a non-empty string' }))
+      return
+    }
+    const query: string = body.query
 
     const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'] as string | undefined)
 
@@ -170,7 +186,7 @@ async function main() {
     // request could read the whole schema. Default policy accepts any
     // structurally valid chain (which unsafeMode's own check is), so
     // the GraphiQL page above keeps working.
-    const introspection = checkIntrospection(zcapConfig, payload, body.query)
+    const introspection = checkIntrospection(zcapConfig, payload, query)
     if (!introspection.ok) {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ errors: [{ message: introspection.message, extensions: { code: introspection.code } }], data: null }))
@@ -179,9 +195,9 @@ async function main() {
 
     const result = await graphql({
       schema,
-      source: body.query,
+      source: query,
       variableValues: body.variables,
-      contextValue: { zcapConfig, payload, rawQuery: body.query, caseConfig },
+      contextValue: { zcapConfig, payload, rawQuery: query, caseConfig },
     })
 
     res.writeHead(200, { 'content-type': 'application/json' })

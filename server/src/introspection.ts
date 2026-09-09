@@ -57,9 +57,18 @@ function selectsIntrospection(
  * An unparseable document returns false: `graphql()` is about to fail
  * it with a syntax error anyway, and both sides parse with the same
  * graphql-js, so there is no document this sees differently from the
- * executor.
+ * executor. A non-string returns false for the same reason — it is not
+ * a document, and whatever the caller does with it next will reject it.
  */
-export function containsSchemaIntrospection(query: string): boolean {
+export function containsSchemaIntrospection(query: unknown): boolean {
+  // A caller's `query` comes from a JSON body, where it can be absent
+  // or any type at all — and the substring precheck below would throw a
+  // TypeError on a non-string, which in an async request handler is an
+  // unhandled rejection that ends the process. A non-string is not a
+  // document and cannot select anything, so say so and let the caller's
+  // own validation (or graphql()) reject it.
+  if (typeof query !== 'string') return false
+
   // A field name can't be built dynamically in a GraphQL document, so a
   // document whose text contains neither name cannot select either
   // field, and the parse is pure cost — worth skipping, since a host
@@ -120,7 +129,7 @@ export interface IntrospectionCheckResult {
 export function checkIntrospection(
   config: ZcapServerConfig,
   payload: InvocationHeaderPayload | null,
-  rawQueryText: string,
+  rawQueryText: unknown,
   policy: IntrospectionPolicy = 'authorized',
 ): IntrospectionCheckResult {
   if (policy === 'public') return { ok: true }
