@@ -3,8 +3,9 @@ import canonicalize from 'canonicalize'
 
 /**
  * Spec (eddsa-jcs-2022): sha256(JCS(proofOptions)) || sha256(JCS(document)).
- * Must match CRMS Python (`eddsa_jcs_2022.py::_hash`) and
- * `@digicred-holdings/did-graphql-server`'s `hashEddsaJcs2022` byte-for-byte.
+ * Must match `@digicred-holdings/did-graphql-server`'s own
+ * `hashEddsaJcs2022`, and any other implementation of the suite,
+ * byte-for-byte.
  */
 export function hashEddsaJcs2022(
   document: Record<string, unknown>,

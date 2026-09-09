@@ -44,7 +44,7 @@ export function decodeInvocationHeader(header: string): InvocationHeaderPayload 
 }
 
 /**
- * Client-side expiry check — lets the holder decide to request a
+ * Client-side expiry check — lets the client decide to request a
  * fresh delegation *before* firing a request that would just be
  * rejected. This is NOT a substitute for the resource server's own
  * verification (no signature check happens here).

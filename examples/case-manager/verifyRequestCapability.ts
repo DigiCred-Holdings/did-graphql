@@ -1,6 +1,6 @@
 // Real, local cryptographic verification of an incoming capability's
-// own proof — using Credo (backed by Askar) directly, no live ACA-Py
-// agent involved. This is genuinely additional to
+// own proof — using Credo (backed by Askar) directly, no external
+// verification service involved. This is genuinely additional to
 // did-graphql-server's own checkInvocation/checkAuthOnly: those check
 // allowedAction membership and expiry (still real, still running
 // exactly as configured below), but in unsafeMode they never check a
@@ -11,9 +11,9 @@
 // Only the capability's own proof is checked (the shape this example
 // produces — a single self-issued, self-signed leaf, no delegation
 // chain). A real multi-hop delegation chain, and the separate signed
-// *invocation* proof a real wallet also produces, are still what
-// did-graphql-server's real checkInvocation verifies via a tenant's
-// ACA-Py agent — that's not reimplemented here.
+// *invocation* proof an invoking client also produces, are what
+// did-graphql-server's real checkInvocation verifies in-process —
+// that's not reimplemented here.
 
 import type { Agent } from '@credo-ts/core'
 

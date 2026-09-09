@@ -9,8 +9,8 @@
  * browse frameworks, item types, and items (with their extensions)
  * immediately, against any go-case server you point it at.
  *
- * Still unsafeMode against did-graphql-server's own gate — no live
- * ACA-Py agent here for that. But when CONTROLLER_SEED is set, the
+ * Still unsafeMode against did-graphql-server's own gate. But when
+ * CONTROLLER_SEED is set, the
  * capability's own Data Integrity proof IS really, cryptographically
  * verified per request, locally, via Credo/Askar — see
  * verifyRequestCapability.ts. That's a genuine extra check on top of
@@ -53,7 +53,7 @@ const GRAPHQL_ENDPOINT = `http://localhost:${PORT}/graphql`
 
 const caseConfig = {
   baseUrl: process.env['CASE_SERVER_URL'] ?? 'https://go-case-digicred-sandbox.up.railway.app',
-  packageId: process.env['CASE_PACKAGE_ID'] ?? 'd27a0443-8155-530c-8858-6011014101df', // Wyoming Higher Education
+  packageId: process.env['CASE_PACKAGE_ID'] ?? 'd27a0443-8155-530c-8858-6011014101df', // a framework the default sandbox server hosts
   apiKey: process.env['CASE_SERVER_API_KEY'] || undefined,
 }
 
@@ -72,12 +72,10 @@ async function readBody(req: http.IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-// A browser-based caller (e.g. companion-app's GraphQL Workflow
-// Sandbox, running on its own dev-server origin) is a different
-// origin from this one — real CORS, not optional, same as
-// catalog-graphql's own server.ts. `*` is fine here: this is a local
-// sample app with a synthetic demo capability, not a deployment
-// guarding real data.
+// A browser-based caller on its own dev-server origin is a different
+// origin from this one — real CORS, not optional. `*` is fine here:
+// this is a local sample app with a synthetic demo capability, not a
+// deployment guarding real data.
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -88,7 +86,7 @@ async function main() {
   // One agent for the whole process: signs the demo capability once
   // here at startup (if CONTROLLER_SEED is set), then verifies
   // incoming capabilities' real signatures per request throughout the
-  // server's lifetime (verifyRequestCapability.ts) — no wallet
+  // server's lifetime (verifyRequestCapability.ts) — nothing
   // persisted to disk, an in-memory Askar store is enough since
   // CONTROLLER_SEED re-derives the same key deterministically anyway.
   const agent = await createTestAgent()
@@ -170,7 +168,7 @@ async function main() {
         : 'Controller: did:example:demo (unsigned placeholder — set CONTROLLER_SEED for a real signed + really-verified capability)',
     )
     console.log(
-      '[UNSAFE_MODE] did-graphql-server\'s own allowedAction/expiry gate still skips agent verification (no live ACA-Py agent here) — see the package README before using this pattern anywhere real.\n',
+      '[UNSAFE_MODE] did-graphql-server\'s own allowedAction/expiry gate still skips signature verification — see the package README before using this pattern anywhere real.\n',
     )
     console.log(
       `Open ${GRAPHQL_ENDPOINT} in a browser for a GraphiQL explorer — the x-zcap-invocation header and a default query are pre-filled, so it works immediately. Try case.cfDocuments first to see what frameworks exist on this server, then case.cfItemTypes/cfItems with a framework title you find there.`,

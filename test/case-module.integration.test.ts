@@ -107,7 +107,7 @@ const caseConfig = {
 
 const leaf = {
   id: 'urn:zcap:test',
-  controller: 'did:key:z6Mkholder',
+  controller: 'did:key:z6Mkinvoker',
   invocationTarget: GRAPHQL_ENDPOINT,
   allowedAction: [DOCUMENTS_QUERY, ITEMS_QUERY, ASSOCIATIONS_QUERY, ASSOCIATIONS_WITH_ITEM_QUERY],
   expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),

@@ -1,7 +1,7 @@
 // Talks to the real go-case server. go-case has no server-side item
 // search/filter within a package (confirmed against its actual routes)
 // — the only way to get a package's items is the whole package in one
-// response (~13MB for Wyoming Higher Education), so package fetches
+// response (tens of MB for a large framework), so package fetches
 // are cached in memory rather than round-tripped per GraphQL query.
 // CFDocuments (framework metadata) and CFItems (single competency
 // lookups), by contrast, are real per-resource go-case endpoints with
@@ -88,9 +88,9 @@ export interface CFItem {
   // Free-form, per-framework — the CASE 1.1 spec only says extensions
   // is arbitrary JSON keyed by namespace; it does not mandate which
   // namespaces exist. Consumers know their own frameworks' conventions
-  // (e.g. digicred-crms's catalog-graphql reads `ext:ctdl`/
-  // `ext:digicred` — see its caseData.ts) — this module stays generic
-  // rather than hardcoding one consumer's namespace choices.
+  // (a credential vocabulary under its own `ext:` namespace, say) — this
+  // module stays generic rather than hardcoding one consumer's
+  // namespace choices.
   extensions?: Record<string, unknown>
 }
 
@@ -143,8 +143,8 @@ async function fetchJson<T>(url: string, config: CaseConfig): Promise<T | null> 
 }
 
 // Bounded to a max entry count, not just a TTL — package sizes vary
-// hugely (Wyoming K-12 alone is ~31k items; Wyoming Higher Education's
-// is ~13MB), so a server hosting many more frameworks than exist today
+// hugely (a single framework can run to tens of thousands of items and
+// tens of MB), so a server hosting many frameworks
 // could otherwise pin every large package in memory at once, with only
 // the TTL to (eventually) free any of it. This is a plain LRU by entry
 // count, not a byte-size budget — good enough to cap how many packages
@@ -176,7 +176,7 @@ function getCachedPackage(packageId: string): { package: CFPackage; fetchedAt: n
  * cache hit) or would silently trigger a full package fetch just to
  * resolve one item — which, for a package that isn't already warm,
  * could be far more expensive than the single-item GET /CFItems/{id}
- * it exists to avoid (Wyoming Higher Education alone is ~13MB).
+ * it exists to avoid (a large package alone can be tens of MB).
  */
 export function isPackageCached(config: CaseConfig, packageId: string): boolean {
   const ttl = config.ttlMs ?? 5 * 60 * 1000
@@ -234,7 +234,7 @@ export async function getCFItem(config: CaseConfig, id: string): Promise<CFItem 
  * (see CFAssociationEndpoint.item's resolver). Deliberately checks
  * isPackageCached FIRST and returns null immediately on a miss, rather
  * than calling getCFPackage unconditionally: fetching an entire
- * not-yet-cached package (Wyoming Higher Education alone is ~13MB)
+ * not-yet-cached package (tens of MB for a large framework)
  * just to resolve one item would be far more expensive than the single
  * getCFItem call this exists to avoid — the caller falls back to that
  * live lookup whenever this returns null.

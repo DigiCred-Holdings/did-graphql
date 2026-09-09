@@ -1,14 +1,13 @@
 /**
  * Wire shape for a ZCAP-LD capability, camelCase per the W3C-CCG spec.
- * Mirrors digicred-crms's real `vaults/v1_0/zcap/model.py::Capability`
- * field-for-field, so a capability minted by that module (or by this
- * repo's `zcap:delegate` workflow action) round-trips without
+ * Kept field-for-field compatible with other ZCAP-LD implementations,
+ * so a capability minted elsewhere round-trips through here without
  * translation.
  *
- * NOTE: this package does not verify or evaluate `caveat` — the
- * digicred workflow-template design (`catalog.zcap.graphql.allowedAction`)
- * authorizes by literal query string instead of coarse verbs + caveats,
- * so `caveat` is accepted for shape-compatibility only and never read.
+ * NOTE: this package does not verify or evaluate `caveat` — this design
+ * authorizes by literal query document (`allowedAction`) instead of
+ * coarse verbs plus caveats, so `caveat` is accepted for
+ * shape-compatibility only and never read.
  */
 export interface Proof {
   type: string
@@ -35,7 +34,7 @@ export interface Capability {
  * unsigned document + eddsa-jcs-2022 hash (`createUnsignedCapabilityInvocation`)
  * and assembles the wire shape after the caller signs
  * (`finalizeCapabilityInvocation`). It never holds keys — signing stays
- * in the injected `invokeCapability` (e.g. Credo KMS in digicred-wallet).
+ * in the injected `invokeCapability`, wherever the key actually lives.
  */
 export interface InvocationProof {
   type: string
@@ -71,8 +70,8 @@ export interface InvocationHeaderPayload {
 }
 
 /**
- * Caller-supplied signing function — implemented by `digicred-wallet`
- * (Bifold + Credo), which holds the chain's leaf controller's key.
+ * Caller-supplied signing function — implemented by whatever holds the
+ * chain's leaf controller's key.
  * Use `createUnsignedCapabilityInvocation` + `finalizeCapabilityInvocation`
  * for the proof format; this callback only supplies the Ed25519 signature.
  */

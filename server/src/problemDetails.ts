@@ -10,12 +10,11 @@
 //               or a diagnostic query) — never a rejection reason on
 //               its own.
 //
-// Ported/adapted from the equivalent Python registry
-// (plugins/w3c_vc/w3c_vc/problem_details.py in digicred-crms), which maps
-// onto real W3C spec URIs — this one doesn't, since these failure modes
-// are specific to this library's own request-time lookup/verification
-// sequence (did:key root controller resolution, the zcap_capabilities
-// table, Host-header target matching) rather than the VC/DI specs
+// Modelled on a problem-details registry that maps onto real W3C spec
+// URIs — this one doesn't, since these failure modes are specific to
+// this library's own request-time lookup/verification sequence (did:key
+// root controller resolution, the caller's own trusted-root store,
+// Host-header target matching) rather than the VC/DI specs
 // themselves.
 
 export type ProblemSeverity = 'error' | 'warning'
@@ -63,7 +62,7 @@ export const PROOF_INVALID = problemType(
   'A proof on the capability or invocation failed cryptographic verification.',
 )
 
-/** No row in zcap_capabilities matches this (controller, id, invocationTarget) — the root controller/target pair isn't a known, trusted root. */
+/** Nothing in the caller's trusted-root store matches this (controller, id, invocationTarget) — the root controller/target pair isn't a known, trusted root. */
 export const ROOT_CAPABILITY_UNKNOWN = problemType(
   'error',
   'ROOT_CAPABILITY_UNKNOWN',

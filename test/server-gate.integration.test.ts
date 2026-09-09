@@ -14,7 +14,7 @@ const unsafeConfig = configureZcap({
 function unsignedLeaf(overrides: Partial<Capability> = {}): Capability {
   return {
     id: 'urn:zcap:test',
-    controller: 'did:key:z6Mkholder',
+    controller: 'did:key:z6Mkinvoker',
     invocationTarget: GRAPHQL_ENDPOINT,
     allowedAction: [AUTH_QUERY],
     expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -28,7 +28,7 @@ test('unsafe checkAuthOnly accepts a structurally valid chain (query Auth { auth
   const result = await checkAuthOnly(unsafeConfig, decodeInvocationHeader(header))
   assert.equal(result.valid, true)
   assert.equal(result.reason, null)
-  assert.equal(result.controller, 'did:key:z6Mkholder')
+  assert.equal(result.controller, 'did:key:z6Mkinvoker')
   assert.equal(result.invocationTarget, GRAPHQL_ENDPOINT)
   assert.deepEqual(result.allowedAction, [AUTH_QUERY])
 })

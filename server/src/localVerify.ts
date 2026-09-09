@@ -3,7 +3,8 @@
  * root-controller/DID method this library verifies. Pure crypto and
  * structural checks only:
  *
- *   - No agent call, ever. The tenant's ACA-Py agent is never consulted.
+ *   - No agent call, ever. No external key or verification service
+ *     is consulted; the public key comes from the presented did:key.
  *   - No database access. The caller (the consuming resource server)
  *     is responsible for resolving which root capability is trusted
  *     for a given request — by looking it up in its own store keyed
@@ -181,7 +182,7 @@ export function verifyChain(
   }
   // Delegation proofs are signed by the PARENT's controller — the
   // root, in this system's single-level chains — not by the leaf's
-  // own controller (who is merely the holder being delegated to).
+  // own controller (who is merely the party being delegated to).
   if (!vmControlledBy(vm, rootCapability.controller)) {
     return fail(
       cap,
@@ -217,7 +218,7 @@ export function verifyActionAllowed(
 
 /**
  * The invocation-specific checks alone: a real `capabilityInvocation`
- * proof, signed by the leaf's own controller (the current holder —
+ * proof, signed by the leaf's own controller (the current invoker —
  * distinct from the leaf's *delegation* proof, which is signed by the
  * parent/root controller and is checked by {@link verifyChain}).
  * Assumes {@link verifyChain} (and, for a real query, `allowedAction`

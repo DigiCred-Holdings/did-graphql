@@ -1,10 +1,8 @@
 # @digicred-holdings/did-graphql-server
 
-Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **entirely in-process** — did:key + `eddsa-jcs-2022` Data Integrity proofs, no ACA-Py agent call and no database read from inside this package. This package holds no signing keys of its own; the public key it verifies against comes straight from the presented `did:key` string. Holder signing is `digicred-wallet` (Bifold + Credo), not this package.
+Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **entirely in-process** — did:key + `eddsa-jcs-2022` Data Integrity proofs, no external agent call and no database read from inside this package. This package holds no signing keys of its own; the public key it verifies against comes straight from the presented `did:key` string. Signing the invocation is the invoking client's job, never this package's.
 
-See the [repo README](../README.md) for the product story. This page is the server API, attenuation rules, and the optimizations that are already in place.
-
-`digicred-crms`'s `services/catalog-graphql` is the reference consumer.
+See the [repo README](../README.md) for how the pieces fit. This page is the server API, attenuation rules, and the optimizations that are already in place.
 
 ## Install
 
@@ -18,10 +16,10 @@ Node-only. Depends on `graphql` (query parse / field-subset), `bs58` and `canoni
 
 This package does **pure cryptographic and structural verification only**. It is deliberately ignorant of two things a real resource server needs, on purpose:
 
-- **Which root capability is trusted for this request.** The wallet only ever sends the delegated leaf — the root it descends from is never transmitted (unsigned, trusted by local dereference per the ZCAP-LD spec). Resolving *which* root is trusted for a given request — normally a database lookup keyed by `(controller, id, invocationTarget)` — is the caller's job. This package never queries a database and never reconstructs a root on its own; you hand it the root capability you already trust, and it checks the presented leaf against exactly that object.
-- **Which tenant a request belongs to.** Not a concept this package has at all. Whatever resolved `rootCapability` you pass in already implies the tenant; there is no separate tenant-resolution step here.
+- **Which root capability is trusted for this request.** A client only ever sends the delegated leaf — the root it descends from is never transmitted (unsigned, trusted by local dereference per the ZCAP-LD spec). Resolving *which* root is trusted for a given request — normally a database lookup keyed by `(controller, id, invocationTarget)` — is the caller's job. This package never queries a database and never reconstructs a root on its own; you hand it the root capability you already trust, and it checks the presented leaf against exactly that object.
+- **Which account or tenant a request belongs to.** Not a concept this package has at all. Whatever resolved `rootCapability` you pass in already implies it; there is no separate resolution step here.
 
-Concretely: **the library never calls the tenant's ACA-Py agent**, and **the library never opens a database connection**. Both of those are the consuming resource server's responsibility, using its own store (e.g. digicred-crms's `zcap_capabilities` table).
+Concretely: **the library never calls out to an agent or key service**, and **never opens a database connection**. Both are the consuming resource server's responsibility, using whatever store it keeps its trusted roots in.
 
 ## Usage
 
@@ -61,7 +59,7 @@ if (!gate.ok) {
 `authModule` and `caseModule()` are `GraphqlModule`s. Each splices exactly one field onto `type Query` — `auth` and `case` — with its own fields on a namespace type behind it, so a host server's own root fields never collide with a module's. `composeModules` concatenates SDL, merges resolvers, and unions `defaultQueries` (GraphiQL / sandbox `allowedAction`).
 
 - **auth** — `query Auth { auth { zcap { valid } } }` (`checkAuthOnly`, no invocation), under `Query.auth`.
-- **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) under `Query.case`, gated by `checkInvocation`. College/Program mapping stays in catalog-graphql. Full field/query reference: [src/case/README.md](src/case/README.md).
+- **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) under `Query.case`, gated by `checkInvocation`. Any opinionated shape over that vocabulary stays in the consuming server. Full field/query reference: [src/case/README.md](src/case/README.md).
 
 ```ts
 import { authModule, caseModule, composeModules, attachResolvers } from '@digicred-holdings/did-graphql-server'
@@ -99,7 +97,7 @@ Only `did:key` root controllers are supported — any other DID method fails clo
    - leaf not expired,
    - leaf's delegation proof (`proofPurpose: capabilityDelegation`) is signed by the **root's** controller, and verifies as `eddsa-jcs-2022`.
 3. `allowedAction` membership (see below).
-4. A real capabilityInvocation proof, signed by the **leaf's own** controller (the current holder — a different signer than step 2's delegation proof), matching this capability/target/query, and verifying as `eddsa-jcs-2022`.
+4. A real capabilityInvocation proof, signed by the **leaf's own** controller (the current invoker — a different signer than step 2's delegation proof), matching this capability/target/query, and verifying as `eddsa-jcs-2022`.
 
 `checkAuthOnly` stops after step 2 (unsafe mode: structural + expiry + optional target pin).
 
@@ -107,12 +105,12 @@ Only `did:key` root controllers are supported — any other DID method fails clo
 
 Entries are **real GraphQL documents**, not coarse verbs. Two matches:
 
-1. **Exact** — whitespace-normalized string equality. Cheap; this is the common case when the wallet sends a registered query verbatim.
+1. **Exact** — whitespace-normalized string equality. Cheap; this is the common case when a client sends a registered query verbatim.
 2. **Field subset** — the request's root fields, and every nested field under them, are a subset of some registered entry. Trimming, reordering, or dropping fields of an already-allowed query works with no extra catalog entry. `__typename` is ignored (GraphQL metadata). Named fragment spreads are **not** supported and fail closed.
 
-Argument **values** (`limit`, `filter`, …) are **not** constrained. A holder who may query `colleges` may pass any variables. Value-level caveats are a separate, unbuilt axis.
+Argument **values** (`limit`, `filter`, …) are **not** constrained. A client allowed to query a field may pass any variables to it. Value-level caveats are a separate, unbuilt axis.
 
-Inline fragments (`... on College`) are walked (needed for `node`). Aliased duplicate root fields union their selections.
+Inline fragments (`... on SomeType`) are walked, as an interface- or union-typed field needs them. Aliased duplicate root fields union their selections.
 
 ## Problem details
 
@@ -130,7 +128,7 @@ Every rejection reason is a `ProblemDetail` (`{ typeURI, title, detail }`), draw
 
 **Exact match before parse.** `matchesAllowedAction` compares normalized strings first. The GraphQL parser and field-subset walk run only on a miss.
 
-**Subset attenuation.** Register the *widest* query you are willing to allow. Leaner wallet queries (fewer fields, different order) do not need their own `allowedAction` rows.
+**Subset attenuation.** Register the *widest* query you are willing to allow. Leaner client queries (fewer fields, different order) do not need their own `allowedAction` rows.
 
 **Fail closed on exotic GraphQL.** Unparseable documents, missing operations, or named fragments return "not allowed" rather than a partial allow.
 
@@ -138,7 +136,7 @@ Every rejection reason is a `ProblemDetail` (`{ typeURI, title, detail }`), draw
 
 ## Caching
 
-There is nothing to cache here that this package owns — no Traction token, no agent round-trip, no DB connection. The one thing worth caching is the caller's own **root-capability lookup** (the `(controller, id, invocationTarget)` DB read) — that's outside this package's scope; see catalog-graphql's own docs for its caching story.
+There is nothing to cache here that this package owns — no access token, no agent round-trip, no DB connection. The one thing worth caching is the caller's own **root-capability lookup** (the `(controller, id, invocationTarget)` read) — that's outside this package's scope, and belongs in whatever store the consuming server keeps its roots in.
 
 ## unsafeMode
 

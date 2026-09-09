@@ -25,7 +25,7 @@ const composed = composeModules([authModule])
 
 const leaf = {
   id: 'urn:zcap:test',
-  controller: 'did:key:z6Mkholder',
+  controller: 'did:key:z6Mkinvoker',
   invocationTarget: GRAPHQL_ENDPOINT,
   allowedAction: composed.defaultQueries,
   expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),

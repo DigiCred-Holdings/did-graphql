@@ -24,7 +24,7 @@ export function materializeRoot(issuerDid: string, invocationTarget = GRAPHQL_EN
 export async function delegateGraphqlZcap(
   agent: Agent,
   issuer: DidKeyPair,
-  holder: DidKeyPair,
+  invoker: DidKeyPair,
   invocationTarget = GRAPHQL_ENDPOINT,
   allowedAction: string[] = [AUTH_QUERY],
 ): Promise<Capability> {
@@ -32,7 +32,7 @@ export async function delegateGraphqlZcap(
   const unsigned = {
     '@context': ['https://w3id.org/zcap/v1', 'https://w3id.org/security/data-integrity/v2'],
     id: `urn:zcap:delegated:${crypto.randomUUID()}`,
-    controller: holder.did,
+    controller: invoker.did,
     invocationTarget,
     parentCapability: root.id,
     allowedAction,
@@ -47,7 +47,7 @@ export async function delegateGraphqlZcap(
 
 export async function invokeGraphqlZcap(
   agent: Agent,
-  holder: DidKeyPair,
+  invoker: DidKeyPair,
   capability: Capability,
   capabilityAction: string,
   invocationTarget: string,
@@ -56,7 +56,7 @@ export async function invokeGraphqlZcap(
     '@context': ['https://w3id.org/zcap/v1', 'https://w3id.org/security/data-integrity/v2'],
     id: `urn:uuid:${crypto.randomUUID()}`,
   }
-  const secured = await addDataIntegrityProof(agent, holder, unsigned, {
+  const secured = await addDataIntegrityProof(agent, invoker, unsigned, {
     proofPurpose: 'capabilityInvocation',
     capability: capability.id,
     capabilityAction,

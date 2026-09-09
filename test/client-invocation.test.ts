@@ -10,7 +10,7 @@ import {
   DATA_INTEGRITY_CONTEXT,
 } from '../client/src/invocation.ts'
 
-test('hashEddsaJcs2022 matches CRMS Python fixture byte-for-byte', () => {
+test('hashEddsaJcs2022 matches a cross-implementation fixture byte-for-byte', () => {
   const document = {
     '@context': ['https://w3id.org/zcap/v1', 'https://w3id.org/security/data-integrity/v2'],
     id: 'urn:uuid:00000000-0000-0000-0000-000000000000',

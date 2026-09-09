@@ -10,12 +10,12 @@ import { addDataIntegrityProof, verifyDataIntegrityProof, verifyDataIntegrityPro
 
 let agent: Agent
 let issuer: DidKeyPair
-let holder: DidKeyPair
+let invoker: DidKeyPair
 
 before(async () => {
   agent = await createTestAgent()
   issuer = await createDidKey(agent)
-  holder = await createDidKey(agent)
+  invoker = await createDidKey(agent)
 })
 
 after(async () => {
@@ -24,10 +24,10 @@ after(async () => {
 
 test('creates two distinct did:key identities with Ed25519 key pairs', () => {
   assert.match(issuer.did, /^did:key:z6Mk/)
-  assert.match(holder.did, /^did:key:z6Mk/)
-  assert.notEqual(issuer.did, holder.did)
+  assert.match(invoker.did, /^did:key:z6Mk/)
+  assert.notEqual(issuer.did, invoker.did)
   assert.equal(issuer.verificationMethod.startsWith(`${issuer.did}#`), true)
-  assert.equal(holder.verificationMethod.startsWith(`${holder.did}#`), true)
+  assert.equal(invoker.verificationMethod.startsWith(`${invoker.did}#`), true)
 })
 
 test('issuer signs a DataIntegrityProof with eddsa-jcs-2022 via credo-ts KMS', async () => {
@@ -48,9 +48,9 @@ test('issuer signs a DataIntegrityProof with eddsa-jcs-2022 via credo-ts KMS', a
   assert.equal(await verifyDataIntegrityProof(agent, issuer, secured), true)
 })
 
-test('holder cannot verify a proof the issuer signed (wrong key)', async () => {
+test('invoker cannot verify a proof the issuer signed (wrong key)', async () => {
   const secured = await addDataIntegrityProof(agent, issuer, { n: 1 }, { proofPurpose: 'assertionMethod' })
-  assert.equal(await verifyDataIntegrityProof(agent, holder, secured), false)
+  assert.equal(await verifyDataIntegrityProof(agent, invoker, secured), false)
 })
 
 test('tampering the document invalidates the eddsa-jcs-2022 proof', async () => {
@@ -101,7 +101,7 @@ test('verifyDataIntegrityProofByController rejects a tampered document', async (
 test('verifyDataIntegrityProofByController rejects a proof claiming a different controller than actually signed it', async () => {
   const secured = await addDataIntegrityProof(agent, issuer, { capability: 'demo' }, { proofPurpose: 'capabilityDelegation' })
   const proof = secured.proof as Record<string, unknown>
-  const relabeled = { ...secured, proof: { ...proof, verificationMethod: holder.verificationMethod } }
+  const relabeled = { ...secured, proof: { ...proof, verificationMethod: invoker.verificationMethod } }
   assert.equal(await verifyDataIntegrityProofByController(agent, relabeled), false)
 })
 

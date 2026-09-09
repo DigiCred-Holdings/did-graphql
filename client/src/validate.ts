@@ -8,11 +8,11 @@ const DID_RE = /^did:[a-z0-9]+:[^\s]+$/i
 export interface GraphqlZcapValidationOptions {
   /**
    * Allow `http:` and loopback/private hosts. Defaults to false.
-   * Only for local catalog-graphql against a host you already trust.
+   * Local development against a host you already trust, only.
    */
   allowInsecureEndpoint?: boolean
   /**
-   * Independent pin (workflow template `catalog.zcap.graphql.invocationTarget`,
+   * Independent pin (a second copy of the target from the delegating channel,
    * tenant allowlist entry, DID service endpoint). If set, the capability
    * `invocationTarget` MUST canonicalize to the same URL.
    */
@@ -25,7 +25,7 @@ export interface GraphqlZcapValidationOptions {
   fetchEndpoint?: string
   /**
    * Hostname allowlist. An entry is an exact host or a suffix pattern
-   * (`*.digicred.services` matches that domain and any subdomain).
+   * (`*.example.org` matches that domain and any subdomain).
    * If set and non-empty, the invocationTarget host MUST match one entry.
    */
   allowedHosts?: string[]
@@ -46,8 +46,9 @@ export interface ValidatedGraphqlZcap {
  *
  * This does **not** verify Data Integrity proofs. The resource server MUST
  * still verify the chain and invocation. These steps decide whether a
- * wallet is willing to put this capability in `x-zcap-invocation` and POST
- * it — the capability is otherwise a bearer token to whoever receives it.
+ * client is willing to put this capability in `x-zcap-invocation` and
+ * POST it — the capability is otherwise a bearer token to whoever
+ * receives it.
  *
  * Inputs: `capability`, optional `expectedInvocationTarget` / `fetchEndpoint`
  * / `allowedHosts` / `allowInsecureEndpoint`.

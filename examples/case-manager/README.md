@@ -46,16 +46,16 @@ else to work.
 |---|---|---|
 | `CASE_SERVER_URL` | the go-case sandbox | Which go-case server to query |
 | `CASE_SERVER_API_KEY` | unset | Sent as `Authorization: Bearer <key>` — go-case's own read routes need no auth (verified against its source), some deployments front it with one anyway |
-| `CASE_PACKAGE_ID` | Wyoming Higher Education | This deployment's default package — only matters for a query that omits both `packageId` and `framework` |
+| `CASE_PACKAGE_ID` | a framework the sandbox hosts | This deployment's default package — only matters for a query that omits both `packageId` and `framework` |
 | `CONTROLLER_SEED` | unset | See below |
 | `PORT` | `4321` | |
 
 ## `CONTROLLER_SEED` — a real signed capability
 
 By default the demo capability is an **unsigned placeholder**
-(`proof: { type: 'none' }`) — the server runs in `unsafeMode`, so
-there's no live ACA-Py agent for it to check a real signature against
-anyway, and this keeps the zero-setup path genuinely zero-setup.
+(`proof: { type: 'none' }`) — the server runs in `unsafeMode`, so it
+doesn't check signatures at all, and this keeps the zero-setup path
+genuinely zero-setup.
 
 Set `CONTROLLER_SEED` to something (any string) and the capability is
 signed for real instead:
@@ -92,14 +92,12 @@ signature would be anywhere else in this repo.
 This is a real, additional check layered on top of
 did-graphql-server's own `allowedAction`/expiry gate — not a
 replacement for it, and that gate still runs `unsafeMode` regardless
-(no live ACA-Py agent in this example, so it still can't check a
-signature *itself*). What's real production-grade verification
-through a tenant's actual ACA-Py agent looks like is
-`catalog-graphql`'s job, via `checkInvocation` — see the package
-README's `unsafeMode` section. What's here is: given only the DID on
-the wire, can a resource server verify a signature was genuinely
-produced by that DID's key, using nothing but Credo/Askar, no wallet,
-no network call? Yes — and this is what that looks like.
+(so it still can't check a signature *itself*). Real verification is
+`checkInvocation` with `unsafeMode` off — see the package README's
+`unsafeMode` section. What's here is: given only the DID on the wire,
+can a resource server verify a signature was genuinely produced by
+that DID's key, using nothing but Credo/Askar and no network call?
+Yes — and this is what that looks like.
 
 When `CONTROLLER_SEED` is unset, the placeholder capability's
 `proof: { type: 'none' }` has nothing to verify, so this check is a

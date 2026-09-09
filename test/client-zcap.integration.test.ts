@@ -15,21 +15,21 @@ import { AUTH_QUERY, GRAPHQL_ENDPOINT, delegateGraphqlZcap, invokeGraphqlZcap } 
 
 let agent: Agent
 let issuer: DidKeyPair
-let holder: DidKeyPair
+let invoker: DidKeyPair
 
 before(async () => {
   agent = await createTestAgent()
   issuer = await createDidKey(agent)
-  holder = await createDidKey(agent)
+  invoker = await createDidKey(agent)
 })
 
 after(async () => {
   if (agent) await agent.shutdown()
 })
 
-test('delegated GraphQL ZCAP passes the wallet validation algorithm', async () => {
-  const capability = await delegateGraphqlZcap(agent, issuer, holder)
-  assert.equal(capability.controller, holder.did)
+test('delegated GraphQL ZCAP passes the client validation algorithm', async () => {
+  const capability = await delegateGraphqlZcap(agent, issuer, invoker)
+  assert.equal(capability.controller, invoker.did)
   assert.equal(capability.invocationTarget, GRAPHQL_ENDPOINT)
   assert.deepEqual(capability.allowedAction, [AUTH_QUERY])
   assert.equal(capability.proof?.type, 'DataIntegrityProof')
@@ -45,12 +45,12 @@ test('delegated GraphQL ZCAP passes the wallet validation algorithm', async () =
 })
 
 test('validation refuses a ZCAP whose invocationTarget is not the GraphQL endpoint', async () => {
-  const capability = await delegateGraphqlZcap(agent, issuer, holder, 'https://evil.example/not-graphql')
+  const capability = await delegateGraphqlZcap(agent, issuer, invoker, 'https://evil.example/not-graphql')
   assert.throws(() => validateGraphqlZcap(capability), InvalidCapabilityError)
 })
 
 test('DidGraphQLClient.checkAuth sends an unsigned query Auth { auth { zcap { valid } } } diagnostic', async () => {
-  const capability = await delegateGraphqlZcap(agent, issuer, holder)
+  const capability = await delegateGraphqlZcap(agent, issuer, invoker)
   let capturedHeader: string | undefined
   let capturedBody: string | undefined
 
@@ -83,7 +83,7 @@ test('query() signs the invocation for the same URL it actually fetches', async 
   // capability.invocationTarget (the raw field) by coincidence if
   // query() ever signs the raw field instead of the canonicalized one.
   const nonCanonicalTarget = `${GRAPHQL_ENDPOINT}/`
-  const capability = await delegateGraphqlZcap(agent, issuer, holder, nonCanonicalTarget, [AUTH_QUERY])
+  const capability = await delegateGraphqlZcap(agent, issuer, invoker, nonCanonicalTarget, [AUTH_QUERY])
 
   let fetchedUrl: string | undefined
   let signedTarget: string | undefined
@@ -99,7 +99,7 @@ test('query() signs the invocation for the same URL it actually fetches', async 
     }) as typeof fetch,
     invokeCapability: async (cap, action, invocationTarget) => {
       signedTarget = invocationTarget
-      return invokeGraphqlZcap(agent, holder, cap, action, invocationTarget)
+      return invokeGraphqlZcap(agent, invoker, cap, action, invocationTarget)
     },
   })
 

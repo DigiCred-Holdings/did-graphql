@@ -1,7 +1,6 @@
-// A real, interactive GraphiQL page for GET /graphql — adapted from
-// catalog-graphql's own graphiql.ts (the reference consumer of this
-// package), trimmed down since this example is always unsafeMode (no
-// real-vs-unsafe branch needed here). Loaded from a CDN (React +
+// A real, interactive GraphiQL page for GET /graphql, kept minimal
+// since this example is always unsafeMode (no real-vs-unsafe branch
+// needed here). Loaded from a CDN (React +
 // GraphiQL UMD builds) — fine for a local example server, not meant
 // for a CSP-constrained production surface.
 

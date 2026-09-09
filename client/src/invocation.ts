@@ -2,7 +2,7 @@ import bs58 from 'bs58'
 import { hashEddsaJcs2022 } from './eddsaJcs2022.js'
 import type { InvocationProof, SignedInvocation } from './types.js'
 
-/** Mirrors digicred-crms `w3c_vc/zcap/model.py::DELEGATED_CONTEXTS`. */
+/** The `@context` entries a delegated capability document carries. */
 export const ZCAP_CONTEXT = 'https://w3id.org/zcap/v1'
 export const DATA_INTEGRITY_CONTEXT = 'https://w3id.org/security/data-integrity/v2'
 
@@ -46,8 +46,9 @@ function newInvocationId(): string {
 
 /**
  * Builds the unsigned invocation document + proof options and the
- * eddsa-jcs-2022 hash. Does not sign — the holder supplies the signature
- * via `finalizeCapabilityInvocation` (wallet: Credo `kms.sign`).
+ * eddsa-jcs-2022 hash. Does not sign — the caller supplies the signature
+ * via `finalizeCapabilityInvocation`, from whatever key store holds the
+ * invoking DID's key.
  */
 export function createUnsignedCapabilityInvocation(input: {
   capabilityId: string
