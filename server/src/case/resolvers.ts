@@ -67,6 +67,11 @@ export const caseResolvers = {
     },
   },
   Query: {
+    /** Namespace marker only — see CaseQueries below for the real fields. */
+    case: () => ({}),
+  },
+
+  CaseQueries: {
     cfDocuments: async (
       _parent: unknown,
       args: { limit?: number; offset?: number },

@@ -109,9 +109,17 @@ export const CASE_TYPEDEFS = /* GraphQL */ `
     """Total associations matching the given filters, before limit/offset slicing — see Query.cfAssociations."""
     totalCount: Int!
   }
-`
 
-export const CASE_QUERY_FIELDS = /* GraphQL */ `
+  """
+  Raw IMS CASE 1.1 queries, namespaced under Query.case. Hard cutover
+  (not a deprecate-first migration) from the former flat
+  cfDocuments/cfDocument/cfPackage/cfItem/cfItemTypes/cfItems/
+  cfAssociations root fields — consuming services (and any ZCAP
+  capability whose allowedAction lists the old flat query shape) must
+  update to Query.case.<field> and, for ZCAP, get a newly-issued
+  capability; the old shape no longer parses against this schema at all.
+  """
+  type CaseQueries {
     """Every framework hosted on the go-case server. Uses go-case's own real limit/offset pagination."""
     cfDocuments(limit: Int, offset: Int): CFDocumentResults!
     """A single framework's own metadata by id, from any package on the server."""
@@ -126,14 +134,20 @@ export const CASE_QUERY_FIELDS = /* GraphQL */ `
     cfItems(packageId: ID, framework: String, itemType: String, limit: Int, offset: Int): CFItemResults!
     """Associations within one framework, paginated and filterable — the graph-walking query: pass originId to find everything a CFItem points AT (e.g. an occupation's required skills), or destinationId to find everything that points TO it (e.g. which occupations require this skill). The other side of each returned association (originNodeURI/destinationNodeURI.identifier) is a valid cfItem(id) lookup, even across frameworks — associations routinely point at items in a different package (e.g. an O*NET occupation pointing at a Content Model element). associationType filters further (e.g. "isRelatedTo"); totalCount reflects the filtered count."""
     cfAssociations(packageId: ID, framework: String, originId: ID, destinationId: ID, associationType: String, limit: Int, offset: Int): CFAssociationResults!
+  }
+`
+
+export const CASE_QUERY_FIELDS = /* GraphQL */ `
+    """Raw IMS CASE 1.1 queries — see CaseQueries."""
+    case: CaseQueries!
 `
 
 export const CASE_DEFAULT_QUERIES = [
-  'query CFDocuments($limit: Int, $offset: Int) { cfDocuments(limit: $limit, offset: $offset) { items { identifier title description frameworkType publisher version } totalCount } }',
-  'query CFDocument($id: ID!) { cfDocument(id: $id) { identifier uri title creator publisher description subject language version frameworkType caseVersion lastChangeDateTime } }',
-  'query CFPackage($id: ID!) { cfPackage(id: $id) { CFDocument { identifier title frameworkType } CFItems { identifier CFItemType fullStatement abbreviatedStatement } CFAssociations { identifier associationType originNodeURI { identifier title } destinationNodeURI { identifier title } extensions } } }',
-  'query CFItem($id: ID!) { cfItem(id: $id) { identifier uri CFItemType fullStatement abbreviatedStatement subject extensions } }',
-  'query CFItemTypes($packageId: ID, $framework: String) { cfItemTypes(packageId: $packageId, framework: $framework) { itemType count } }',
-  'query CFItems($packageId: ID, $framework: String, $itemType: String, $limit: Int, $offset: Int) { cfItems(packageId: $packageId, framework: $framework, itemType: $itemType, limit: $limit, offset: $offset) { items { identifier CFItemType fullStatement abbreviatedStatement } totalCount } }',
-  'query CFAssociations($packageId: ID, $framework: String, $originId: ID, $destinationId: ID, $associationType: String, $limit: Int, $offset: Int) { cfAssociations(packageId: $packageId, framework: $framework, originId: $originId, destinationId: $destinationId, associationType: $associationType, limit: $limit, offset: $offset) { items { identifier associationType originNodeURI { identifier title } destinationNodeURI { identifier title } extensions } totalCount } }',
+  'query CFDocuments($limit: Int, $offset: Int) { case { cfDocuments(limit: $limit, offset: $offset) { items { identifier title description frameworkType publisher version } totalCount } } }',
+  'query CFDocument($id: ID!) { case { cfDocument(id: $id) { identifier uri title creator publisher description subject language version frameworkType caseVersion lastChangeDateTime } } }',
+  'query CFPackage($id: ID!) { case { cfPackage(id: $id) { CFDocument { identifier title frameworkType } CFItems { identifier CFItemType fullStatement abbreviatedStatement } CFAssociations { identifier associationType originNodeURI { identifier title } destinationNodeURI { identifier title } extensions } } } }',
+  'query CFItem($id: ID!) { case { cfItem(id: $id) { identifier uri CFItemType fullStatement abbreviatedStatement subject extensions } } }',
+  'query CFItemTypes($packageId: ID, $framework: String) { case { cfItemTypes(packageId: $packageId, framework: $framework) { itemType count } } }',
+  'query CFItems($packageId: ID, $framework: String, $itemType: String, $limit: Int, $offset: Int) { case { cfItems(packageId: $packageId, framework: $framework, itemType: $itemType, limit: $limit, offset: $offset) { items { identifier CFItemType fullStatement abbreviatedStatement } totalCount } } }',
+  'query CFAssociations($packageId: ID, $framework: String, $originId: ID, $destinationId: ID, $associationType: String, $limit: Int, $offset: Int) { case { cfAssociations(packageId: $packageId, framework: $framework, originId: $originId, destinationId: $destinationId, associationType: $associationType, limit: $limit, offset: $offset) { items { identifier associationType originNodeURI { identifier title } destinationNodeURI { identifier title } extensions } totalCount } } }',
 ]

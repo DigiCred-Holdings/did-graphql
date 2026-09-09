@@ -1,5 +1,13 @@
 # @digicred-holdings/did-graphql-server
 
+## 0.5.0
+
+### Minor Changes
+
+- **Breaking:** the CASE module's `cfDocuments`/`cfDocument`/`cfPackage`/`cfItem`/`cfItemTypes`/`cfItems`/`cfAssociations` query fields are now namespaced under `Query.case` (a new `CaseQueries` type) instead of flat root fields. `CASE_DEFAULT_QUERIES` is updated to the new nested shape.
+
+  This is a hard cutover, not a deprecate-first migration — the old flat fields no longer exist in the schema at all. Any consumer's own hand-written queries need `case { ... }` wrapped around these fields, and any already-issued ZCAP capability whose `allowedAction` lists the old flat query shape will stop matching (the match is a structural comparison against the actual query text) and needs re-issuing against the new nested shape.
+
 ## 0.4.0
 
 ### Minor Changes

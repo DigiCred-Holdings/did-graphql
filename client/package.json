@@ -1,6 +1,6 @@
 {
   "name": "@digicred-holdings/did-graphql-client",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "GraphQL client that authorizes requests via ZCAP (W3C Authorization Capabilities) invocation headers.",
   "license": "Apache-2.0",
   "type": "module",

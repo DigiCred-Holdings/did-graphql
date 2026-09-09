@@ -94,12 +94,14 @@ async function main() {
   const agent = await createTestAgent()
 
   // Every one of the case module's own default queries — the module's
-  // full case-management surface (cfDocuments/cfDocument/cfPackage/
+  // full case-management surface (case.cfDocuments/cfDocument/cfPackage/
   // cfItem/cfItemTypes/cfItems) is explorable immediately, not just one
   // or two hand-picked examples. See the package README's attenuation
   // rules: a query that's a field-SUBSET of any of these is also
-  // allowed automatically — only a genuinely different root field, or
-  // extra fields these don't already select, gets rejected.
+  // allowed automatically — since every cf* field now lives under the
+  // same root field (`case`), any combination of them a client asks
+  // for is a subset as long as it doesn't request a field none of
+  // these default queries already select.
   const { capability, controllerDid } = await buildDemoCapability(agent, {
     invocationTarget: GRAPHQL_ENDPOINT,
     allowedAction: CASE_DEFAULT_QUERIES,
@@ -171,7 +173,7 @@ async function main() {
       '[UNSAFE_MODE] did-graphql-server\'s own allowedAction/expiry gate still skips agent verification (no live ACA-Py agent here) — see the package README before using this pattern anywhere real.\n',
     )
     console.log(
-      `Open ${GRAPHQL_ENDPOINT} in a browser for a GraphiQL explorer — the x-zcap-invocation header and a default query are pre-filled, so it works immediately. Try cfDocuments first to see what frameworks exist on this server, then cfItemTypes/cfItems with a framework title you find there.`,
+      `Open ${GRAPHQL_ENDPOINT} in a browser for a GraphiQL explorer — the x-zcap-invocation header and a default query are pre-filled, so it works immediately. Try case.cfDocuments first to see what frameworks exist on this server, then case.cfItemTypes/cfItems with a framework title you find there.`,
     )
   })
 
