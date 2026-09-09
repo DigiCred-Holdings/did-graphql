@@ -144,18 +144,24 @@ async function main() {
       return
     }
 
-    let body: { query?: unknown; variables?: Record<string, unknown> }
+    let parsed: unknown
     try {
-      body = JSON.parse(await readBody(req))
+      parsed = JSON.parse(await readBody(req))
     } catch {
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'invalid JSON body' }))
       return
     }
 
-    // JSON.parse happily yields `{}`, so `query` can be absent or any
-    // type. Reject a bad one as the caller error it is, before anything
-    // downstream assumes a string.
+    // `null`, `"str"`, `7` and `[]` are all valid JSON, and reading a
+    // property off the first of those throws — so narrow to an object
+    // before touching it, then check `query` itself: `{}` yields
+    // undefined, `{"query": 7}` a number, and everything downstream
+    // (the introspection precheck, graphql's parse) wants a string.
+    const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as {
+      query?: unknown
+      variables?: Record<string, unknown>
+    }
     if (typeof body.query !== 'string' || body.query.trim() === '') {
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'body.query must be a non-empty string' }))

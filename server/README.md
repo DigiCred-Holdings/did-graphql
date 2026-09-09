@@ -165,7 +165,9 @@ Validate `query` first, though. A JSON body yields whatever the client sent: `{}
 if (typeof body.query !== 'string' || body.query.trim() === '') {
   return sendJson(400, { error: 'body.query must be a non-empty string' })
 }
-``` Three policies, as the fourth argument:
+```
+
+Three policies, as the fourth argument:
 
 | Policy | Introspection allowed for |
 |---|---|
