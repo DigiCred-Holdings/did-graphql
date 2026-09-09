@@ -73,7 +73,7 @@ export async function createDidKey(agent: Agent): Promise<DidKeyPair> {
  * Same result as createDidKey, but deterministic: the same `seed`
  * string always produces the same did:key — useful for a controller
  * identity that should stay stable across restarts (e.g. a sample
- * app's CONTROLLER_SEED env var) without persisting a wallet.
+ * app's CONTROLLER_SEED env var) without persisting a store.
  *
  * Askar's Key.fromSeed needs exactly 32 bytes; an arbitrary seed
  * string is hashed down to that length with sha256 rather than

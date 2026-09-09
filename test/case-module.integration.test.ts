@@ -20,7 +20,7 @@ const DOCUMENTS_QUERY = CASE_DEFAULT_QUERIES[0]!
 const ITEMS_QUERY = CASE_DEFAULT_QUERIES.find((q) => q.includes('cfItems('))!
 const ASSOCIATIONS_QUERY = CASE_DEFAULT_QUERIES.find((q) => q.includes('cfAssociations('))!
 const ASSOCIATIONS_WITH_ITEM_QUERY =
-  'query CFAssociationsWithItem($packageId: ID, $originId: ID) { cfAssociations(packageId: $packageId, originId: $originId) { items { identifier originNodeURI { identifier item { extensions } } } totalCount } }'
+  'query CFAssociationsWithItem($packageId: ID, $originId: ID) { case { cfAssociations(packageId: $packageId, originId: $originId) { items { identifier originNodeURI { identifier item { extensions } } } totalCount } } }'
 
 const unsafeConfig = configureZcap({
   unsafeMode: true,
@@ -107,7 +107,7 @@ const caseConfig = {
 
 const leaf = {
   id: 'urn:zcap:test',
-  controller: 'did:key:z6Mkholder',
+  controller: 'did:key:z6Mkinvoker',
   invocationTarget: GRAPHQL_ENDPOINT,
   allowedAction: [DOCUMENTS_QUERY, ITEMS_QUERY, ASSOCIATIONS_QUERY, ASSOCIATIONS_WITH_ITEM_QUERY],
   expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -134,9 +134,11 @@ test('unsafe cfDocuments is allowed when the document is in allowedAction', asyn
   })
   assert.equal(result.errors, undefined)
   assert.deepEqual(plain(result.data), {
-    cfDocuments: {
-      items: [{ identifier: 'pkg-1', title: 'Demo Framework', description: null, frameworkType: null, publisher: null, version: null }],
-      totalCount: 1,
+    case: {
+      cfDocuments: {
+        items: [{ identifier: 'pkg-1', title: 'Demo Framework', description: null, frameworkType: null, publisher: null, version: null }],
+        totalCount: 1,
+      },
     },
   })
 })
@@ -150,7 +152,7 @@ test('unsafe cfDocuments allows a field-subset of the registered document (real 
   // its own passing test documents the intended behavior instead of
   // silently losing the coverage.
   clearCasePackageCache()
-  const subset = 'query CFDocuments { cfDocuments { totalCount } }'
+  const subset = 'query CFDocuments { case { cfDocuments { totalCount } } }'
   const payload = decodeInvocationHeader(encodeInvocationHeader({ chain: [leaf] }))
   const result = await graphql({
     schema: schemaWithCase(),
@@ -158,11 +160,16 @@ test('unsafe cfDocuments allows a field-subset of the registered document (real 
     contextValue: { zcapConfig: unsafeConfig, payload, rawQuery: subset, caseConfig },
   })
   assert.equal(result.errors, undefined)
-  assert.deepEqual(plain(result.data), { cfDocuments: { totalCount: 1 } })
+  assert.deepEqual(plain(result.data), { case: { cfDocuments: { totalCount: 1 } } })
 })
 
-test('unsafe cfItem is rejected — no allowedAction entry selects that root field at all', async () => {
-  const other = 'query Item($id: ID!) { cfItem(id: $id) { identifier } }'
+test('unsafe cfItem is rejected — root field "case" matches allowedAction, but no entry selects the cfItem field under it', async () => {
+  // Every registered entry's root field is now "case" (see
+  // CASE_DEFAULT_QUERIES), so this genuinely exercises the field-subset
+  // check rather than a root-field mismatch: "case" matches, but none
+  // of DOCUMENTS_QUERY/ITEMS_QUERY/ASSOCIATIONS_QUERY select "cfItem"
+  // underneath it, so the subset check still fails.
+  const other = 'query Item($id: ID!) { case { cfItem(id: $id) { identifier } } }'
   const payload = decodeInvocationHeader(encodeInvocationHeader({ chain: [leaf] }))
   const result = await graphql({
     schema: schemaWithCase(),
@@ -184,10 +191,10 @@ test('cfItems with no itemType returns every item in the package', async () => {
     contextValue: { zcapConfig: unsafeConfig, payload, rawQuery: ITEMS_QUERY, caseConfig },
   })
   assert.equal(result.errors, undefined)
-  const data = plain(result.data) as { cfItems: { totalCount: number; items: { identifier: string }[] } }
-  assert.equal(data.cfItems.totalCount, 3)
+  const data = plain(result.data) as { case: { cfItems: { totalCount: number; items: { identifier: string }[] } } }
+  assert.equal(data.case.cfItems.totalCount, 3)
   assert.deepEqual(
-    data.cfItems.items.map((i) => i.identifier),
+    data.case.cfItems.items.map((i) => i.identifier),
     ['item-1', 'item-2', 'item-3'],
   )
 })
@@ -202,13 +209,13 @@ test('cfItems(itemType) filters server-side before pagination, and totalCount re
     contextValue: { zcapConfig: unsafeConfig, payload, rawQuery: ITEMS_QUERY, caseConfig },
   })
   assert.equal(result.errors, undefined)
-  const data = plain(result.data) as { cfItems: { totalCount: number; items: { identifier: string; CFItemType: string }[] } }
-  assert.equal(data.cfItems.totalCount, 2)
+  const data = plain(result.data) as { case: { cfItems: { totalCount: number; items: { identifier: string; CFItemType: string }[] } } }
+  assert.equal(data.case.cfItems.totalCount, 2)
   assert.deepEqual(
-    data.cfItems.items.map((i) => i.identifier),
+    data.case.cfItems.items.map((i) => i.identifier),
     ['item-1', 'item-2'],
   )
-  assert.ok(data.cfItems.items.every((i) => i.CFItemType === 'Program'))
+  assert.ok(data.case.cfItems.items.every((i) => i.CFItemType === 'Program'))
 })
 
 test('cfAssociations(originId) finds everything one item points at, across the package', async () => {
@@ -222,11 +229,11 @@ test('cfAssociations(originId) finds everything one item points at, across the p
   })
   assert.equal(result.errors, undefined)
   const data = plain(result.data) as {
-    cfAssociations: { totalCount: number; items: { identifier: string; associationType: string }[] }
+    case: { cfAssociations: { totalCount: number; items: { identifier: string; associationType: string }[] } }
   }
-  assert.equal(data.cfAssociations.totalCount, 2)
+  assert.equal(data.case.cfAssociations.totalCount, 2)
   assert.deepEqual(
-    data.cfAssociations.items.map((a) => a.identifier),
+    data.case.cfAssociations.items.map((a) => a.identifier),
     ['assoc-1', 'assoc-2'],
   )
 })
@@ -241,10 +248,10 @@ test('cfAssociations(destinationId) finds everything pointing AT one item — th
     contextValue: { zcapConfig: unsafeConfig, payload, rawQuery: ASSOCIATIONS_QUERY, caseConfig },
   })
   assert.equal(result.errors, undefined)
-  const data = plain(result.data) as { cfAssociations: { totalCount: number; items: { identifier: string }[] } }
-  assert.equal(data.cfAssociations.totalCount, 2)
+  const data = plain(result.data) as { case: { cfAssociations: { totalCount: number; items: { identifier: string }[] } } }
+  assert.equal(data.case.cfAssociations.totalCount, 2)
   assert.deepEqual(
-    data.cfAssociations.items.map((a) => a.identifier),
+    data.case.cfAssociations.items.map((a) => a.identifier),
     ['assoc-1', 'assoc-3'],
   )
 })
@@ -260,10 +267,10 @@ test('cfAssociations(associationType) filters further, and extensions come throu
   })
   assert.equal(result.errors, undefined)
   const data = plain(result.data) as {
-    cfAssociations: { totalCount: number; items: { identifier: string; extensions: unknown }[] }
+    case: { cfAssociations: { totalCount: number; items: { identifier: string; extensions: unknown }[] } }
   }
-  assert.equal(data.cfAssociations.totalCount, 1)
-  assert.deepEqual(data.cfAssociations.items[0]?.extensions, { skillLevel: 3 })
+  assert.equal(data.case.cfAssociations.totalCount, 1)
+  assert.deepEqual(data.case.cfAssociations.items[0]?.extensions, { skillLevel: 3 })
 })
 
 test('cfAssociations().originNodeURI.item resolves the full CFItem by identifier — one round trip, not two', async () => {
@@ -277,11 +284,29 @@ test('cfAssociations().originNodeURI.item resolves the full CFItem by identifier
   })
   assert.equal(result.errors, undefined)
   const data = plain(result.data) as {
-    cfAssociations: { items: { identifier: string; originNodeURI: { identifier: string; item: { extensions: unknown } } }[] }
+    case: { cfAssociations: { items: { identifier: string; originNodeURI: { identifier: string; item: { extensions: unknown } } }[] } }
   }
-  assert.equal(data.cfAssociations.items.length, 2)
-  for (const item of data.cfAssociations.items) {
+  assert.equal(data.case.cfAssociations.items.length, 2)
+  for (const item of data.case.cfAssociations.items) {
     assert.equal(item.originNodeURI.identifier, 'item-1')
     assert.deepEqual(item.originNodeURI.item.extensions, { 'ext:ctdl': { subject: ['Business & Leadership'] } })
   }
+})
+
+test('a query giving neither packageId nor framework fails PACKAGE_ID_REQUIRED when no default is configured', async () => {
+  const { resolvePackageId } = await import('../server/src/case/queries.js')
+  await assert.rejects(
+    () => resolvePackageId({ baseUrl: 'https://case.invalid' }, {}),
+    (err: unknown) => {
+      assert.match(String((err as Error).message), /no packageId or framework given/)
+      assert.equal((err as { extensions?: Record<string, unknown> }).extensions?.['code'], 'PACKAGE_ID_REQUIRED')
+      return true
+    },
+  )
+})
+
+test('an explicit packageId, or a configured default, still resolves', async () => {
+  const { resolvePackageId } = await import('../server/src/case/queries.js')
+  assert.equal(await resolvePackageId({ baseUrl: 'https://case.invalid' }, { packageId: 'given' }), 'given')
+  assert.equal(await resolvePackageId({ baseUrl: 'https://case.invalid', packageId: 'default' }, {}), 'default')
 })

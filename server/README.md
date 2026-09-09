@@ -1,10 +1,8 @@
 # @digicred-holdings/did-graphql-server
 
-Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **entirely in-process** — did:key + `eddsa-jcs-2022` Data Integrity proofs, no ACA-Py agent call and no database read from inside this package. This package holds no signing keys of its own; the public key it verifies against comes straight from the presented `did:key` string. Holder signing is `digicred-wallet` (Bifold + Credo), not this package.
+Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **entirely in-process** — did:key + `eddsa-jcs-2022` Data Integrity proofs, no external agent call and no database read from inside this package. This package holds no signing keys of its own; the public key it verifies against comes straight from the presented `did:key` string. Signing the invocation is the invoking client's job, never this package's.
 
-See the [repo README](../README.md) for the product story. This page is the server API, attenuation rules, and the optimizations that are already in place.
-
-`digicred-crms`'s `services/catalog-graphql` is the reference consumer.
+See the [repo README](../README.md) for how the pieces fit. This page is the server API, attenuation rules, and the optimizations that are already in place.
 
 ## Install
 
@@ -18,10 +16,10 @@ Node-only. Depends on `graphql` (query parse / field-subset), `bs58` and `canoni
 
 This package does **pure cryptographic and structural verification only**. It is deliberately ignorant of two things a real resource server needs, on purpose:
 
-- **Which root capability is trusted for this request.** The wallet only ever sends the delegated leaf — the root it descends from is never transmitted (unsigned, trusted by local dereference per the ZCAP-LD spec). Resolving *which* root is trusted for a given request — normally a database lookup keyed by `(controller, id, invocationTarget)` — is the caller's job. This package never queries a database and never reconstructs a root on its own; you hand it the root capability you already trust, and it checks the presented leaf against exactly that object.
-- **Which tenant a request belongs to.** Not a concept this package has at all. Whatever resolved `rootCapability` you pass in already implies the tenant; there is no separate tenant-resolution step here.
+- **Which root capability is trusted for this request.** A client only ever sends the delegated leaf — the root it descends from is never transmitted (unsigned, trusted by local dereference per the ZCAP-LD spec). Resolving *which* root is trusted for a given request — normally a database lookup keyed by `(controller, id, invocationTarget)` — is the caller's job. This package never queries a database and never reconstructs a root on its own; you hand it the root capability you already trust, and it checks the presented leaf against exactly that object.
+- **Which account or tenant a request belongs to.** Not a concept this package has at all. Whatever resolved `rootCapability` you pass in already implies it; there is no separate resolution step here.
 
-Concretely: **the library never calls the tenant's ACA-Py agent**, and **the library never opens a database connection**. Both of those are the consuming resource server's responsibility, using its own store (e.g. digicred-crms's `zcap_capabilities` table).
+Concretely: **the library never calls out to an agent or key service**, and **never opens a database connection**. Both are the consuming resource server's responsibility, using whatever store it keeps its trusted roots in.
 
 ## Usage
 
@@ -43,7 +41,7 @@ const zcapConfig = configureZcap({
 
 const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'])
 
-// Diagnostic: query Auth { zcap { valid } } — chain only, no invocation.
+// Diagnostic: query Auth { auth { zcap { valid } } } — chain only, no invocation.
 const auth = checkAuthOnly(zcapConfig, payload)
 
 // Real resolver: chain + allowedAction + signed invocation.
@@ -58,20 +56,49 @@ if (!gate.ok) {
 
 ## GraphQL modules
 
-`authModule` and `caseModule()` are `GraphqlModule`s. `composeModules` concatenates SDL, merges Query resolvers, and unions `defaultQueries` (GraphiQL / sandbox `allowedAction`).
+`authModule` and `caseModule()` are `GraphqlModule`s. Each splices exactly one field onto `type Query` — `auth` and `case` — with its own fields on a namespace type behind it, so a host server's own root fields never collide with a module's. `composeModules` concatenates SDL, merges resolvers, and unions `defaultQueries` (GraphiQL / sandbox `allowedAction`).
 
-- **auth** — `query Auth { zcap { valid } }` (`checkAuthOnly`, no invocation).
-- **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) gated by `checkInvocation`. College/Program mapping stays in catalog-graphql. Full field/query reference: [src/case/README.md](src/case/README.md).
+- **auth** — `query Auth { auth { zcap { valid } } }` (`checkAuthOnly`, no invocation), under `Query.auth`.
+- **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) under `Query.case`, gated by `checkInvocation`. Any opinionated shape over that vocabulary stays in the consuming server. Full field/query reference: [src/case/README.md](src/case/README.md).
 
 ```ts
-import { authModule, caseModule, composeModules, attachResolvers } from '@digicred-holdings/did-graphql-server'
+import { authModule, caseModule, composeModules, mergeResolvers, attachResolvers } from '@digicred-holdings/did-graphql-server'
 
 const composed = composeModules([authModule, caseModule()])
-const schema = buildSchema(`${catalogTypeDefs}\n${composed.sdl}`) // or splice queryFields into your Query
-attachResolvers(schema, { ...composed.resolvers, Query: { ...composed.resolvers.Query, ...catalogQuery } })
+const schema = buildSchema(`${myTypeDefs}\n${composed.sdl}`) // or splice queryFields into your Query
+attachResolvers(schema, mergeResolvers(composed.resolvers, { Query: myQueryResolvers }))
 ```
 
 GraphiQL `defaultQuery` is `authModule.defaultQueries[0]` (`AUTH_QUERY`).
+
+### Type names are global
+
+Query *fields* are namespaced (`Query.auth`, `Query.case`), but GraphQL has no namespacing for **type** names — a schema has exactly one flat type registry, and `buildSchema` rejects a duplicate definition outright. Composing these modules therefore claims these names in your schema:
+
+| From | Types |
+|---|---|
+| auth | `AuthQueries`, `Zcap` |
+| case | `CaseQueries`, `CFDocument`, `CFDocumentResults`, `CFItem`, `CFItemResults`, `CFItemTypeCount`, `CFPackage`, `CFAssociation`, `CFAssociationResults`, `CFAssociationEndpoint`, `CFURIReference`, and the `JSON` scalar |
+
+The `CF*` names come from the CASE 1.1 vocabulary and are unlikely to collide. **`JSON` is the one to watch**: plenty of servers define their own `scalar JSON`, and if yours does, `buildSchema` fails on the duplicate. `Zcap` is generic enough to be worth a glance too.
+
+A collision in SDL fails loudly, at startup, which is the safe direction.
+
+### Resolver collisions throw, they don't merge
+
+The quieter hazard used to be the **resolver** merge. Resolver maps are keyed by type name and field name, and merging them with spreads (`{ ...existing, ...fields }`) means last writer wins: two modules, or a module and your own map, naming the same type *and* field would silently run whichever came last. That matters when the loser is the gated one — the SDL still advertises a gated field while the wired resolver never calls `checkInvocation`, and unlike most wiring mistakes this one fails *open*, with data flowing and nothing logged.
+
+`composeModules` now refuses it, and `mergeResolvers` is exported for merging your own maps against a module's:
+
+```ts
+mergeResolvers(composed.resolvers, { Query: myQueryResolvers })
+// ResolverCollisionError: map #2 redeclares Query.case, already provided by module 'case' —
+// a silently shadowed resolver can drop an authorization check; merge deliberately if you meant to override it
+```
+
+Three things collide: the same field on the same type, the same custom scalar twice, and a type one map declares as a custom scalar while another declares field resolvers on it (either order — that last one would otherwise drop a whole resolver entry without a word). Adding your own *distinct* fields to a type a module also resolves is fine. Pass `{ label, resolvers }` instead of a bare map to get your own name in the message — a string `label` is what distinguishes it from a map with types of those names. A deliberate override is still possible by spreading by hand; it just has to be deliberate.
+
+This is worth caring about most when a single resolver carries a whole surface's authorization. Hoisting a ZCAP check onto a namespace field (`catalog: async (…) => { await requireAuthorizedQuery(…); return {} }`, with no per-field checks underneath) is a real simplification — one check, impossible to forget on a new field — but it also means shadowing that one resolver ungates every field behind it at once. If you do that, a test that runs an unauthorized document through the composed schema and asserts it is refused is the cheap way to notice.
 
 ## Configuration
 
@@ -99,7 +126,7 @@ Only `did:key` root controllers are supported — any other DID method fails clo
    - leaf not expired,
    - leaf's delegation proof (`proofPurpose: capabilityDelegation`) is signed by the **root's** controller, and verifies as `eddsa-jcs-2022`.
 3. `allowedAction` membership (see below).
-4. A real capabilityInvocation proof, signed by the **leaf's own** controller (the current holder — a different signer than step 2's delegation proof), matching this capability/target/query, and verifying as `eddsa-jcs-2022`.
+4. A real capabilityInvocation proof, signed by the **leaf's own** controller (the current invoker — a different signer than step 2's delegation proof), matching this capability/target/query, and verifying as `eddsa-jcs-2022`.
 
 `checkAuthOnly` stops after step 2 (unsafe mode: structural + expiry + optional target pin).
 
@@ -107,12 +134,45 @@ Only `did:key` root controllers are supported — any other DID method fails clo
 
 Entries are **real GraphQL documents**, not coarse verbs. Two matches:
 
-1. **Exact** — whitespace-normalized string equality. Cheap; this is the common case when the wallet sends a registered query verbatim.
+1. **Exact** — whitespace-normalized string equality. Cheap; this is the common case when a client sends a registered query verbatim.
 2. **Field subset** — the request's root fields, and every nested field under them, are a subset of some registered entry. Trimming, reordering, or dropping fields of an already-allowed query works with no extra catalog entry. `__typename` is ignored (GraphQL metadata). Named fragment spreads are **not** supported and fail closed.
 
-Argument **values** (`limit`, `filter`, …) are **not** constrained. A holder who may query `colleges` may pass any variables. Value-level caveats are a separate, unbuilt axis.
+Argument **values** (`limit`, `filter`, …) are **not** constrained. A client allowed to query a field may pass any variables to it. Value-level caveats are a separate, unbuilt axis.
 
-Inline fragments (`... on College`) are walked (needed for `node`). Aliased duplicate root fields union their selections.
+Inline fragments (`... on SomeType`) are walked, as an interface- or union-typed field needs them. Aliased duplicate root fields union their selections.
+
+### What the gate does not cover: schema introspection
+
+`checkInvocation` runs **inside a field resolver**. `__schema` and `__type` are graphql-js built-in meta-fields with no resolver of ours, so a document selecting only those reaches no gated code path and is answered straight from the schema — with no capability present at all. No row of data leaks, but the whole API shape does: every type, field, and argument name, including any administrative surface a host has composed in.
+
+Close it with one call per request, before `graphql()`:
+
+```ts
+import { checkIntrospection } from '@digicred-holdings/did-graphql-server'
+
+const introspection = checkIntrospection(zcapConfig, payload, body.query)
+if (!introspection.ok) {
+  // introspection.code === 'INTROSPECTION_NOT_ALLOWED'
+  return sendJson(200, { data: null, errors: [{ message: introspection.message, extensions: { code: introspection.code } }] })
+}
+```
+
+A document that doesn't introspect always returns `{ ok: true }`, so this is safe to call unconditionally — the per-field gate still does all the real authorization work. Three policies, as the fourth argument:
+
+| Policy | Introspection allowed for |
+|---|---|
+| `authorized` (default) | Any request presenting a structurally valid, unexpired chain for this `invocationTarget` — what `checkAuthOnly` reports. **Not** `allowedAction` membership: no real capability lists GraphiQL's introspection document, and knowing the shape of an API you already hold a capability for discloses strictly less than the data behind it. In `unsafeMode` this accepts the same structural check everything else does, so a dev GraphiQL page keeps working. |
+| `public` | Everyone. The behavior before this existed — correct for an intentionally public schema. |
+| `off` | Nobody, capability or not. |
+
+`containsSchemaIntrospection(query)` is exported separately if you want the predicate without the policy. It follows aliases (`{ s: __schema { … } }`), inline fragments, and **named fragment spreads** — introspection hidden a hop away in a fragment is the case a naive string or root-field check misses:
+
+```graphql
+query Q { ...F }
+fragment F on Query { __schema { types { name } } }
+```
+
+`__typename` is not treated as introspection: it discloses only the type of something the caller already selected, the same reason `matchesAllowedAction` ignores it.
 
 ## Problem details
 
@@ -130,7 +190,7 @@ Every rejection reason is a `ProblemDetail` (`{ typeURI, title, detail }`), draw
 
 **Exact match before parse.** `matchesAllowedAction` compares normalized strings first. The GraphQL parser and field-subset walk run only on a miss.
 
-**Subset attenuation.** Register the *widest* query you are willing to allow. Leaner wallet queries (fewer fields, different order) do not need their own `allowedAction` rows.
+**Subset attenuation.** Register the *widest* query you are willing to allow. Leaner client queries (fewer fields, different order) do not need their own `allowedAction` rows.
 
 **Fail closed on exotic GraphQL.** Unparseable documents, missing operations, or named fragments return "not allowed" rather than a partial allow.
 
@@ -138,7 +198,7 @@ Every rejection reason is a `ProblemDetail` (`{ typeURI, title, detail }`), draw
 
 ## Caching
 
-There is nothing to cache here that this package owns — no Traction token, no agent round-trip, no DB connection. The one thing worth caching is the caller's own **root-capability lookup** (the `(controller, id, invocationTarget)` DB read) — that's outside this package's scope; see catalog-graphql's own docs for its caching story.
+There is nothing to cache here that this package owns — no access token, no agent round-trip, no DB connection. The one thing worth caching is the caller's own **root-capability lookup** (the `(controller, id, invocationTarget)` read) — that's outside this package's scope, and belongs in whatever store the consuming server keeps its roots in.
 
 ## unsafeMode
 

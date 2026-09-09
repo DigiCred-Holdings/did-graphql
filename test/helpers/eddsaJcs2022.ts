@@ -102,11 +102,9 @@ export async function verifyDataIntegrityProof(
  * incoming capability signed by *someone else's* key, not one it
  * holds itself.
  *
- * Only did:key is supported (returns false for anything else) — real
- * production verification of a tenant-issued capability still goes
- * through that tenant's own ACA-Py agent (see did-graphql-server's
- * checkInvocation), which resolves whatever DID method the tenant
- * actually uses.
+ * Only did:key is supported (returns false for anything else) — the
+ * same single method did-graphql-server's own checkInvocation
+ * verifies.
  */
 export async function verifyDataIntegrityProofByController(agent: Agent, secured: Record<string, unknown>): Promise<boolean> {
   const proof = secured.proof

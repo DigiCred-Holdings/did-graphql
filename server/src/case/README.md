@@ -1,6 +1,6 @@
 # CASE module
 
-Raw [1EdTech CASE 1.1](https://www.imsglobal.org/spec/case/v1p1) vocabulary as a `GraphqlModule` — `cfDocuments`, `cfDocument`, `cfPackage`, `cfItem`, `cfItemTypes`, `cfItems`. This is the honest, unshaped CASE data straight off a go-case server, for browsing what frameworks/items exist. It does **not** know about College/Program, credentials, or anything product-specific — that opinionated shape (and the `packageId`/`framework`/`itemType` mapping into it) stays in the consumer (`digicred-crms`'s `catalog-graphql`).
+Raw [1EdTech CASE 1.1](https://www.imsglobal.org/spec/case/v1p1) vocabulary as a `GraphqlModule` — `cfDocuments`, `cfDocument`, `cfPackage`, `cfItem`, `cfItemTypes`, `cfItems`. This is the honest, unshaped CASE data straight off a [go-case](https://github.com/1EdTech/go-case) server, for browsing what frameworks and items exist. It deliberately knows nothing about any domain shape built on top of that vocabulary — mapping CASE items into your own types stays in the consuming server.
 
 See the [package README](../../README.md) for `GraphqlModule`/`composeModules`/`attachResolvers` and how `checkInvocation`'s `allowedAction` attenuation applies to these fields the same as any other.
 
@@ -21,8 +21,8 @@ attachResolvers(schema, composed.resolvers)
 
 ```ts
 interface CaseConfig {
-  baseUrl: string      // go-case base URL, e.g. https://go-case-digicred-sandbox.up.railway.app
-  packageId: string    // this deployment's default package (Query.cfDocuments/cfPackage/cfItem/... still take any id — see Query fields)
+  baseUrl: string      // go-case base URL, e.g. https://case.example.org
+  packageId?: string   // optional default package, used only by a query giving neither packageId nor framework (those fail PACKAGE_ID_REQUIRED without it). Query.case.cfDocuments/cfPackage/cfItem/... still take any id — see Query fields
   apiKey?: string      // sent as `Authorization: Bearer <key>` if set — go-case's own read routes need no auth (verified against its source), some deployments front it with a key anyway
   ttlMs?: number       // package-fetch cache TTL, default 5 minutes — see Caching
   fetchImpl?: typeof fetch // swap HTTP (tests)
@@ -72,7 +72,7 @@ Same shape `checkInvocation`/`requireAuthorizedQuery` use elsewhere in this pack
 
 ## Caching
 
-`cfPackage`/`cfItemTypes`/`cfItems` all resolve to the *same* in-memory package cache (`client.ts`'s `packageCache`, keyed by `packageId`, default 5-minute TTL via `CaseConfig.ttlMs`) — go-case has no server-side item search/filter within a package, so the only way to answer "what item types exist" or "give me page 3 of items" is to fetch the whole package once (Wyoming Higher Education's is ~13MB; Wyoming K-12's is ~31k items) and slice/count in memory. `cfDocuments`/`cfDocument`/`cfItem` are real per-resource go-case endpoints with their own pagination/lookup, so they bypass this cache entirely — they're never large enough to need it.
+`cfPackage`/`cfItemTypes`/`cfItems` all resolve to the *same* in-memory package cache (`client.ts`'s `packageCache`, keyed by `packageId`, default 5-minute TTL via `CaseConfig.ttlMs`) — go-case has no server-side item search/filter within a package, so the only way to answer "what item types exist" or "give me page 3 of items" is to fetch the whole package once (a real framework runs to tens of MB and tens of thousands of items) and slice/count in memory. `cfDocuments`/`cfDocument`/`cfItem` are real per-resource go-case endpoints with their own pagination/lookup, so they bypass this cache entirely — they're never large enough to need it.
 
 `packageCache` is a bounded LRU (`PACKAGE_CACHE_MAX_ENTRIES`, 12 entries) on top of the TTL — package sizes vary hugely, so an unbounded cache on a server hosting many more frameworks than exist today could otherwise pin every large package in memory at once. This bounds entry *count*, not total bytes; there's no byte-size budget.
 
@@ -86,8 +86,6 @@ There is no cross-process cache for either — each server instance holds its ow
 
 `cfItems`: `limit` is clamped to `CF_ITEMS_MAX_LIMIT` (200), defaulting to `CF_ITEMS_DEFAULT_LIMIT` (50) when omitted. `offset` has no upper bound (slicing past the end just returns an empty page with the real `totalCount`). `cfDocuments`' `limit`/`offset` are passed straight through to go-case's own query string — this module does not re-clamp them.
 
-## Relationship to catalog-graphql
+## Relationship to a consuming server
 
-`digicred-crms`'s `catalog-graphql` service depends on this module directly — `composeModules([authModule, caseModule()])` spliced alongside its own College/Program-specific SDL (`schema.ts`), which is the only place that opinionated shape (and `packageId`/`framework`/`itemType` mapping into it) lives. There is no separate hand-duplicated CASE vocabulary there anymore.
-
-That dependency is **vendored** into `catalog-graphql/vendor/did-graphql-server/`, not a live `file:` path to this repo — see that service's own README for why (a Docker/Railway build only has one repo's checkout) and its `scripts/sync-vendor.sh` for keeping the vendored copy current after a change here.
+A consuming server composes this module alongside its own SDL — `composeModules([authModule, caseModule()])` — and keeps any opinionated shape over CASE data (its own types, plus whatever `packageId`/`framework`/`itemType` mapping feeds them) on its own side. This module stays the raw vocabulary, so there's no reason for a consumer to hand-duplicate it.

@@ -1,5 +1,6 @@
 export * from './zcap.js'
 export * from './localVerify.js'
+export * from './introspection.js'
 export * from './problemDetails.js'
 export * from './modules.js'
 export * from './auth.js'

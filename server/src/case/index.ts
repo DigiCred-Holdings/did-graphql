@@ -24,7 +24,7 @@ export { CASE_DEFAULT_QUERIES, CASE_QUERY_FIELDS, CASE_TYPEDEFS } from './schema
 export { caseResolvers, jsonScalar } from './resolvers.js'
 
 /**
- * Raw IMS CASE 1.1 GraphQL module (cfDocuments, cfPackage, cfItem, …).
+ * Raw IMS CASE 1.1 GraphQL module — Query.case.{cfDocuments, cfPackage, cfItem, …}.
  * Resolvers read `context.caseConfig`; pass `caseConfig` here only if
  * you want a default on the module object (not required).
  */

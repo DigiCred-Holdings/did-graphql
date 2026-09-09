@@ -1,7 +1,7 @@
 // Builds this example's demo capability — either a real
 // eddsa-jcs-2022-signed one (CONTROLLER_SEED set: a real did:key
 // controller, derived deterministically from that seed via Askar —
-// the same seed always re-derives the same key, so there's no wallet
+// the same seed always re-derives the same key, so there's no key
 // storage to persist) or the placeholder unsigned shape
 // (CONTROLLER_SEED unset — today's zero-setup default).
 //

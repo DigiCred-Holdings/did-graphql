@@ -1,7 +1,7 @@
 // Talks to the real go-case server. go-case has no server-side item
 // search/filter within a package (confirmed against its actual routes)
 // — the only way to get a package's items is the whole package in one
-// response (~13MB for Wyoming Higher Education), so package fetches
+// response (tens of MB for a large framework), so package fetches
 // are cached in memory rather than round-tripped per GraphQL query.
 // CFDocuments (framework metadata) and CFItems (single competency
 // lookups), by contrast, are real per-resource go-case endpoints with
@@ -9,7 +9,16 @@
 
 export interface CaseConfig {
   baseUrl: string
-  packageId: string
+  /**
+   * Default package for a query that gives neither packageId nor
+   * framework. Optional, and better left unset: an implicit default
+   * makes a query's answer depend on server config rather than on the
+   * query, which is why a query giving neither now fails with
+   * PACKAGE_ID_REQUIRED instead of quietly reading whatever this
+   * points at. Prefer naming `framework`/`packageId` per query — this
+   * stays for servers built around one framework.
+   */
+  packageId?: string
   /** Optional — go-case's own read routes need no auth (verified against its source), but some deployments front it with a key anyway. Sent as `Authorization: Bearer <key>` if set. */
   apiKey?: string
   /** How long to keep a fetched package before re-fetching. Defaults to 5 minutes. */
@@ -88,9 +97,9 @@ export interface CFItem {
   // Free-form, per-framework — the CASE 1.1 spec only says extensions
   // is arbitrary JSON keyed by namespace; it does not mandate which
   // namespaces exist. Consumers know their own frameworks' conventions
-  // (e.g. digicred-crms's catalog-graphql reads `ext:ctdl`/
-  // `ext:digicred` — see its caseData.ts) — this module stays generic
-  // rather than hardcoding one consumer's namespace choices.
+  // (a credential vocabulary under its own `ext:` namespace, say) — this
+  // module stays generic rather than hardcoding one consumer's
+  // namespace choices.
   extensions?: Record<string, unknown>
 }
 
@@ -143,8 +152,8 @@ async function fetchJson<T>(url: string, config: CaseConfig): Promise<T | null> 
 }
 
 // Bounded to a max entry count, not just a TTL — package sizes vary
-// hugely (Wyoming K-12 alone is ~31k items; Wyoming Higher Education's
-// is ~13MB), so a server hosting many more frameworks than exist today
+// hugely (a single framework can run to tens of thousands of items and
+// tens of MB), so a server hosting many frameworks
 // could otherwise pin every large package in memory at once, with only
 // the TTL to (eventually) free any of it. This is a plain LRU by entry
 // count, not a byte-size budget — good enough to cap how many packages
@@ -176,7 +185,7 @@ function getCachedPackage(packageId: string): { package: CFPackage; fetchedAt: n
  * cache hit) or would silently trigger a full package fetch just to
  * resolve one item — which, for a package that isn't already warm,
  * could be far more expensive than the single-item GET /CFItems/{id}
- * it exists to avoid (Wyoming Higher Education alone is ~13MB).
+ * it exists to avoid (a large package alone can be tens of MB).
  */
 export function isPackageCached(config: CaseConfig, packageId: string): boolean {
   const ttl = config.ttlMs ?? 5 * 60 * 1000
@@ -203,10 +212,11 @@ async function fetchCFPackage(config: CaseConfig, packageId: string): Promise<CF
   return pkg
 }
 
-/** The package this service is configured against (CASE_PACKAGE_ID). Throws if missing. */
+/** The default package this config names (`CaseConfig.packageId`). Throws if unset or not found on the server. */
 export async function getCasePackage(config: CaseConfig): Promise<CFPackage> {
+  if (!config.packageId) throw new Error(`CaseConfig.packageId is not set — no default package to fetch from ${config.baseUrl}`)
   const pkg = await fetchCFPackage(config, config.packageId)
-  if (!pkg) throw new Error(`configured CASE_PACKAGE_ID "${config.packageId}" not found on ${config.baseUrl}`)
+  if (!pkg) throw new Error(`configured CaseConfig.packageId "${config.packageId}" not found on ${config.baseUrl}`)
   return pkg
 }
 
@@ -234,7 +244,7 @@ export async function getCFItem(config: CaseConfig, id: string): Promise<CFItem 
  * (see CFAssociationEndpoint.item's resolver). Deliberately checks
  * isPackageCached FIRST and returns null immediately on a miss, rather
  * than calling getCFPackage unconditionally: fetching an entire
- * not-yet-cached package (Wyoming Higher Education alone is ~13MB)
+ * not-yet-cached package (tens of MB for a large framework)
  * just to resolve one item would be far more expensive than the single
  * getCFItem call this exists to avoid — the caller falls back to that
  * live lookup whenever this returns null.

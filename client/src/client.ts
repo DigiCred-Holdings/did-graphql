@@ -76,13 +76,13 @@ export interface DidGraphQLClientOptions {
    */
   expectedInvocationTarget?: string
   /**
-   * Hostname allowlist (`marketplace.example.com` or `*.digicred.services`).
+   * Hostname allowlist (`api.example.com` or `*.example.org`).
    * If set, `invocationTarget` MUST match an entry.
    */
   allowedHosts?: string[]
   /**
-   * Signs a capabilityInvocation for `capability` — implemented by
-   * `digicred-wallet` (Bifold + Credo), which holds the capability
+   * Signs a capabilityInvocation for `capability` — supplied by the
+   * caller, backed by whatever key store holds the capability
    * controller's key. Required for `query()`; `checkAuth()` doesn't
    * need it (no invocation, diagnostic only).
    */
@@ -108,13 +108,13 @@ export interface DidGraphQLClientOptions {
    * DEV/TEST ONLY — default false. Skips `invokeCapability` entirely:
    * `query()` sends the bare chain with no signed invocation, the same
    * shape `checkAuth()` already uses. Lets the whole client→server
-   * wire format be exercised without a live agent to sign anything —
+   * wire format be exercised with nothing available to sign with —
    * the server must be configured with its own matching unsafe mode
-   * to accept this (see catalog-graphql's UNSAFE_MODE), since a real
-   * server's `allowedAction` gate still runs either way. Never set
+   * to accept this (its `UNSAFE_MODE`), since a real server's
+   * `allowedAction` gate still runs either way. Never set
    * this from a value that isn't a build-time constant you control —
    * it silently drops the one thing that proves the request came from
-   * a real capability holder.
+   * the capability's real controller.
    */
   unsafeMode?: boolean
 }
@@ -245,8 +245,8 @@ export class DidGraphQLClient {
     if (!this.invokeCapability) {
       throw new Error(
         'DidGraphQLClient.query() requires invokeCapability — this package does not sign ' +
-          'invocations itself; pass a function that calls whatever agent holds the capability ' +
-          "controller's key (digicred-wallet / Bifold+Credo). Or set unsafeMode: true for " +
+          'invocations itself; pass a function that calls whatever key store holds the ' +
+          "capability controller's key. Or set unsafeMode: true for " +
           'dev/test use against a server configured to accept unsigned requests.',
       )
     }
@@ -267,17 +267,17 @@ export class DidGraphQLClient {
   }
 
   /**
-   * Dev-only diagnostic (`query Auth { zcap { valid } }`) — reports
+   * Dev-only diagnostic (`query Auth { auth { zcap { valid } } }`) — reports
    * whether the held capability is structurally valid and unexpired
    * per the resource server. No invocation is signed for this — it's
    * a structural/expiry check on the bare chain, not a real
    * capability use. Not part of the production allowedAction surface.
-   * Select more fields on `zcap` (controller, invocationTarget,
+   * Select more fields on `auth.zcap` (controller, invocationTarget,
    * allowedAction) via `query()` if you need the echo, not just valid.
    */
   async checkAuth(): Promise<boolean> {
     const prepared = prepareDiagnosticRequest(this.capability, { query: AUTH_QUERY })
-    const result = await this.fetchJson<GraphQLResponse<{ zcap: { valid: boolean } }>>(prepared, undefined)
-    return result.data?.zcap?.valid ?? false
+    const result = await this.fetchJson<GraphQLResponse<{ auth: { zcap: { valid: boolean } } }>>(prepared, undefined)
+    return result.data?.auth?.zcap?.valid ?? false
   }
 }

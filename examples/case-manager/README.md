@@ -10,15 +10,27 @@ browse frameworks, item types, and items (with their real
 
 ## Run it
 
+**You need a go-case server to point at.** This example ships with no
+default — bring your own instance (a local go-case run, or any
+deployment you have access to) and name it in `CASE_SERVER_URL`. The
+server exits immediately with that message if it's unset, rather than
+starting up and failing on the first query.
+
 ```bash
-npx tsx examples/case-manager/server.ts
+CASE_SERVER_URL=https://your-go-case-instance npx tsx examples/case-manager/server.ts
 ```
 
 Then open **http://localhost:4321/graphql** in a browser. The
 GraphiQL explorer loads with a real `x-zcap-invocation` header and a
-default query already filled in — try `cfDocuments` first to see what
-frameworks exist on the server, then `cfItemTypes`/`cfItems` with a
-framework title you find there.
+default query already filled in — try `case { cfDocuments }` first to
+see what frameworks exist on your server, then
+`case { cfItemTypes }`/`case { cfItems }` with a framework title (or
+one of the `identifier`s you just saw) from there.
+
+There is no default-package setting. `CaseConfig.packageId` exists for
+a server that reads one framework by default; this example is a browser
+instead, so every query names its own `framework` or `packageId`, and
+one giving neither fails with `PACKAGE_ID_REQUIRED` saying so.
 
 ### Or with Docker
 
@@ -28,8 +40,8 @@ context needs all of them:
 
 ```bash
 docker build -f examples/case-manager/Dockerfile -t case-manager .
-docker run --rm -p 4321:4321 case-manager
-docker run --rm -p 4321:4321 -e CONTROLLER_SEED=whatever-you-like case-manager
+docker run --rm -p 4321:4321 -e CASE_SERVER_URL=https://your-go-case-instance case-manager
+docker run --rm -p 4321:4321 -e CASE_SERVER_URL=... -e CONTROLLER_SEED=whatever-you-like case-manager
 ```
 
 Uses `node:22-slim`, not `-alpine` — `@openwallet-foundation/askar-nodejs`
@@ -44,18 +56,17 @@ else to work.
 
 | Env var | Default | What it does |
 |---|---|---|
-| `CASE_SERVER_URL` | the go-case sandbox | Which go-case server to query |
+| `CASE_SERVER_URL` | **required** | Base URL of the go-case server to query. No default — the process exits if it's unset |
 | `CASE_SERVER_API_KEY` | unset | Sent as `Authorization: Bearer <key>` — go-case's own read routes need no auth (verified against its source), some deployments front it with one anyway |
-| `CASE_PACKAGE_ID` | Wyoming Higher Education | This deployment's default package — only matters for a query that omits both `packageId` and `framework` |
 | `CONTROLLER_SEED` | unset | See below |
 | `PORT` | `4321` | |
 
 ## `CONTROLLER_SEED` — a real signed capability
 
 By default the demo capability is an **unsigned placeholder**
-(`proof: { type: 'none' }`) — the server runs in `unsafeMode`, so
-there's no live ACA-Py agent for it to check a real signature against
-anyway, and this keeps the zero-setup path genuinely zero-setup.
+(`proof: { type: 'none' }`) — the server runs in `unsafeMode`, so it
+doesn't check signatures at all, and this keeps the zero-setup path
+genuinely zero-setup.
 
 Set `CONTROLLER_SEED` to something (any string) and the capability is
 signed for real instead:
@@ -92,14 +103,12 @@ signature would be anywhere else in this repo.
 This is a real, additional check layered on top of
 did-graphql-server's own `allowedAction`/expiry gate — not a
 replacement for it, and that gate still runs `unsafeMode` regardless
-(no live ACA-Py agent in this example, so it still can't check a
-signature *itself*). What's real production-grade verification
-through a tenant's actual ACA-Py agent looks like is
-`catalog-graphql`'s job, via `checkInvocation` — see the package
-README's `unsafeMode` section. What's here is: given only the DID on
-the wire, can a resource server verify a signature was genuinely
-produced by that DID's key, using nothing but Credo/Askar, no wallet,
-no network call? Yes — and this is what that looks like.
+(so it still can't check a signature *itself*). Real verification is
+`checkInvocation` with `unsafeMode` off — see the package README's
+`unsafeMode` section. What's here is: given only the DID on the wire,
+can a resource server verify a signature was genuinely produced by
+that DID's key, using nothing but Credo/Askar and no network call?
+Yes — and this is what that looks like.
 
 When `CONTROLLER_SEED` is unset, the placeholder capability's
 `proof: { type: 'none' }` has nothing to verify, so this check is a

@@ -1,8 +1,8 @@
 # @digicred-holdings/did-graphql-client
 
-Wallet-side GraphQL client. It attaches a ZCAP invocation to every request as `x-zcap-invocation` and POSTs JSON to a GraphQL endpoint. It never holds keys and never signs — `invokeCapability` is injected by the caller (`digicred-wallet` / Bifold+Credo, or companion-app talking to that same wallet stack).
+GraphQL client for the invoking side. It attaches a ZCAP invocation to every request as `x-zcap-invocation` and POSTs JSON to a GraphQL endpoint. It never holds keys and never signs — `invokeCapability` is injected by the caller, backed by whatever key store already holds the capability controller's key.
 
-This page is the client API, the **GraphQL ZCAP validation algorithm** the wallet runs before it will send a capability anywhere, wire format, and optimizations.
+This page is the client API, the **GraphQL ZCAP validation algorithm** the client runs before it will send a capability anywhere, wire format, and optimizations.
 
 `DidGraphQLClient` calls `validateGraphqlZcap` on construct and on `setCapability`. It will not POST `x-zcap-invocation` until that algorithm succeeds. That check is not signature verification — see [GraphQL ZCAP validation algorithm](#graphql-zcap-validation-algorithm).
 
@@ -32,16 +32,16 @@ cd client && npm install && npm run build
 import { DidGraphQLClient } from '@digicred-holdings/did-graphql-client'
 
 const client = new DidGraphQLClient({
-  capability: artifacts.zcap.graphql,
-  expectedInvocationTarget: template.catalog.zcap.graphql.invocationTarget,
+  capability: heldCapability,
+  expectedInvocationTarget: expectedTarget, // optional second copy, if you have one
   invokeCapability: async (cap, capabilityAction, invocationTarget) => {
-    // digicred-wallet (Bifold + Credo) signs the invocation — not ACA-Py.
-    return wallet.invokeZcap({ capability: cap, capabilityAction, invocationTarget })
+    // Your key store signs the invocation — this package never holds a key.
+    return keyStore.signZcapInvocation({ capability: cap, capabilityAction, invocationTarget })
   },
 })
 
 const result = await client.query({
-  query: 'query Dataset($limit: Int) { colleges(limit: $limit) { items { name } totalCount } }',
+  query: 'query Items($limit: Int) { items(limit: $limit) { nodes { name } totalCount } }',
   variables: { limit: 10 },
 })
 ```
@@ -53,13 +53,13 @@ Reuse one client for the life of a capability. Call `setCapability()` when the w
 | Option | Default | What it does |
 |--------|---------|----------------|
 | `capability` | required | Delegated leaf ZCAP. Runs `validateGraphqlZcap` on construct / `setCapability`. |
-| `expectedInvocationTarget` | none | Independent pin (template `catalog.zcap.graphql.invocationTarget`). MUST equal the capability's GraphQL URL. |
-| `allowedHosts` | none | Hostname allowlist (`*.digicred.services`). If set, `invocationTarget` MUST match. |
+| `expectedInvocationTarget` | none | Independent pin — a second copy of the target from the delegating channel. MUST equal the capability's GraphQL URL. |
+| `allowedHosts` | none | Hostname allowlist (`*.example.org`). If set, `invocationTarget` MUST match. |
 | `endpoint` | `capability.invocationTarget` | If set, MUST canonicalize to the same URL. This client never POSTs a ZCAP to a different host than the capability names. |
 | `invokeCapability` | none | Required for real `query()`. Signs a fresh invocation for this query string. |
 | `fetchImpl` | `fetch.bind(globalThis)` | Swap the HTTP stack (tests, React Native). Bound to `globalThis` so browsers do not throw *"'fetch' called on an object that does not implement interface Window."* |
 | `checkExpiryBeforeSend` | `true` | Throw `CapabilityExpiredError` locally instead of sending a request the server would reject. |
-| `allowInsecureEndpoint` | `false` | Allow `http://` and loopback/private hosts. Local catalog-graphql only. |
+| `allowInsecureEndpoint` | `false` | Allow `http://` and loopback/private hosts. Local development only. |
 | `timeoutMs` | `10000` | Abort the fetch. `0` disables. Combined with the caller's `AbortSignal` if both are present. |
 | `unsafeMode` | `false` | Skip signing. Sends the bare chain (same shape as `checkAuth()`). The **server** must also be in unsafe mode. Logs a console warning. Never enable from runtime input. |
 
@@ -74,9 +74,9 @@ const client = new DidGraphQLClient({
 
 ## GraphQL ZCAP validation algorithm
 
-The wallet **MUST** run this before it sends the capability in a header. `DidGraphQLClient` does it automatically on `new DidGraphQLClient(...)` and `setCapability(...)`. You can also call `validateGraphqlZcap` yourself (e.g. to show an error in UI before constructing the client).
+A client **MUST** run this before it sends the capability in a header. `DidGraphQLClient` does it automatically on `new DidGraphQLClient(...)` and `setCapability(...)`. You can also call `validateGraphqlZcap` yourself (e.g. to show an error in UI before constructing the client).
 
-This is **not** ZCAP-LD proof verification. The resource server still verifies signatures via the tenant agent. These steps only decide: is this object safe to put on the wire as `x-zcap-invocation`?
+This is **not** ZCAP-LD proof verification — the resource server still verifies signatures. These steps only decide: is this object safe to put on the wire as `x-zcap-invocation`?
 
 `validateGraphqlZcap(capability, options)`:
 
@@ -94,7 +94,7 @@ This is **not** ZCAP-LD proof verification. The resource server still verifies s
 
 On success, the client POSTs **only** to the canonical `invocationTarget`. Fetch uses `redirect: 'error'` so the header cannot follow to another origin. Failures throw `InvalidCapabilityError` (or `CapabilityExpiredError` for step 11).
 
-Contacts send `invocationTarget` over DIDComm; the wallet will not have a global host list. That is the intended path. `allowedHosts` is optional app policy. `expectedInvocationTarget` is a same-connection pin (template vs capability), not a pre-provisioned allowlist. Call without `allowedHosts`, keep the algorithm’s HTTPS / private-IP / same-URL rules, and treat `result.data` as untrusted JSON from that peer.
+A delegating peer sends `invocationTarget` with the capability; a client generally will not have a global host list. That is the intended path. `allowedHosts` is optional app policy. `expectedInvocationTarget` is a same-channel pin (a second copy of the target vs. the capability's own), not a pre-provisioned allowlist. Call without `allowedHosts`, keep the algorithm’s HTTPS / private-IP / same-URL rules, and treat `result.data` as untrusted JSON from that peer.
 
 ```ts
 import { validateGraphqlZcap } from '@digicred-holdings/did-graphql-client'
@@ -117,7 +117,7 @@ validateGraphqlZcap(artifacts.zcap.graphql, {
 
 `query(request, { signal })` always signs a **new** invocation whose `capabilityAction` is the query text. That is the string `allowedAction` must match (or contain as a field subset) on the server.
 
-`checkAuth()` POSTs `query Auth { zcap { valid } }` with **no** invocation. Dev/diagnostic only — not a production `allowedAction`. The same `zcap` object can also select `controller`, `invocationTarget`, and `allowedAction`.
+`checkAuth()` POSTs `query Auth { auth { zcap { valid } } }` with **no** invocation. Dev/diagnostic only — not a production `allowedAction`. The same `auth.zcap` object can also select `controller`, `invocationTarget`, and `allowedAction`.
 
 ## Wire format
 
@@ -138,7 +138,7 @@ Header payload:
 
 `chain` is leaf-first. The unsigned root is never sent; the server reconstructs it. `invocation` is omitted for `checkAuth()` and for `unsafeMode` queries.
 
-Capability fields match CRMS `vaults/v1_0/zcap/model.py::Capability` (camelCase): `id`, `controller`, `invocationTarget`, `parentCapability`, `allowedAction`, `expires`, `proof`. `caveat` is accepted and ignored.
+Capability fields are the ZCAP-LD ones in camelCase: `id`, `controller`, `invocationTarget`, `parentCapability`, `allowedAction`, `expires`, `proof`. `caveat` is accepted and ignored.
 
 ## Optimizations already in place
 
@@ -154,7 +154,7 @@ These are not knobs. They run unless you opt out of the related option.
 
 **Isomorphic base64.** `Buffer` in Node, `btoa`/`atob` with UTF-8 round-trip in the browser / React Native. No polyfill assumed.
 
-**Custom transport.** `prepareInvokedRequest` returns `{ method, headers, body }` if the wallet already has an HTTP layer and only needs the header shape.
+**Custom transport.** `prepareInvokedRequest` returns `{ method, headers, body }` if the caller already has an HTTP layer and only needs the header shape.
 
 **Reuse the client.** `setCapability()` swaps the leaf, re-runs the validation algorithm, and POSTs to the new canonical `invocationTarget`.
 
@@ -163,11 +163,11 @@ These are not knobs. They run unless you opt out of the related option.
 | Thing | Cached? | Configurable? |
 |-------|---------|----------------|
 | Unsigned `x-zcap-invocation` header | Yes, `WeakMap` on the capability object | No — always on. Drop the object (or `setCapability` with a new one) and the entry goes away. |
-| Signed invocation | **No.** A proof is one-use for one query string, produced fresh by the holder agent. | Do not cache `invokeCapability` results across queries. |
+| Signed invocation | **No.** A proof is one-use for one query string, produced fresh by the invoking client. | Do not cache `invokeCapability` results across queries. |
 | GraphQL response body | **No.** This is an auth transport, not an Apollo/urql cache. | Cache in the workflow UI (`context_key` on the instance, React Query, etc.). |
 | HTTPS / timeout / expiry | Policy, not a cache | The options table above |
 
-Recommended caller-side cache (companion / wallet), not inside this library:
+Recommended caller-side cache, not inside this library:
 
 ```ts
 // One client per workflow instance; cache GraphQL data in instance context.
@@ -177,7 +177,7 @@ const client = new DidGraphQLClient({ capability, invokeCapability })
 // Next screen reads context — no second signed POST for the same browse page.
 ```
 
-Do **not** cache across holders, capabilities, or `allowedAction` documents. A new delegation (`setCapability`) must start a new data cache.
+Do **not** cache across invokers, capabilities, or `allowedAction` documents. A new delegation (`setCapability`) must start a new data cache.
 
 ## Errors
 
@@ -196,4 +196,4 @@ GraphQL `{ data, errors }` is a 200 from the server; it is returned, not thrown.
 
 ## unsafeMode
 
-Sets the client to send an unsigned chain. Pair it with the server's `unsafeMode`. Useful for companion-app's detached preview and local catalog-graphql without a live agent. It drops the only proof that the holder is the delegatee. Keep it a build-time constant.
+Sets the client to send an unsigned chain. Pair it with the server's `unsafeMode`. Useful for a detached preview, or a local resource server with no real capability to hand. It drops the only proof that the holder is the delegatee. Keep it a build-time constant.

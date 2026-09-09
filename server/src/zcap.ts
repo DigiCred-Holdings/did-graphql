@@ -2,8 +2,8 @@
 // did:key + eddsa-jcs-2022 is verified entirely in-process (see
 // localVerify.ts) — no other DID method is supported, and no agent
 // or database call is ever made from this module. The caller (the
-// consuming resource server, e.g. catalog-graphql) is responsible for
-// resolving which root capability is trusted for a given request —
+// consuming resource server) is responsible for resolving which root
+// capability is trusted for a given request —
 // by its own (controller, id, invocationTarget) lookup — and passes
 // the result in as `rootCapability`.
 //
@@ -98,8 +98,8 @@ function normalizeQuery(text: string | undefined): string {
 
 /**
  * Every field name selected under a selection set, at any depth —
- * walks nested selections and inline fragments (`... on Type`, used
- * by polymorphic fields like catalog-graphql's `node`). __typename is
+ * walks nested selections and inline fragments (`... on Type`, which
+ * an interface- or union-typed field needs). __typename is
  * excluded: every GraphQL server allows it for free (it's metadata,
  * not something a capability needs to grant access to). Returns false
  * if the tree contains something this simple walk doesn't support
@@ -191,7 +191,7 @@ function matchesAllowedAction(allowedAction: string[] | undefined, rawQueryText:
   return (allowedAction ?? []).some((entry) => isFieldSubsetOfEntry(queryFields, entry))
 }
 
-// --- unsafeMode structural fallback (ported from catalog-graphql-mock's zcap.js) ---
+// --- unsafeMode structural fallback ---
 
 const REQUIRED_FIELDS = ['id', 'controller', 'invocationTarget', 'allowedAction', 'proof'] as const
 
@@ -238,7 +238,7 @@ function presentZcap(
 }
 
 /**
- * GraphQL `Zcap` payload for `query Auth { zcap { valid } }`.
+ * GraphQL `Zcap` payload for `query Auth { auth { zcap { valid } } }`.
  * Leaf fields are echoed even when `valid` is false. `problems` is the
  * structured (typeURI-tagged) form of `reason` — empty when `valid`,
  * or under `unsafeMode` (which never produces ProblemDetails).
@@ -270,7 +270,7 @@ function structuralCheckAuthOnly(payload: InvocationHeaderPayload | null, trust:
 
 // --- real checks: local did:key verification only ---
 
-/** Used by `Query.zcap` (`query Auth { zcap { valid } }`) — chain validity only, no invocation required. */
+/** Used by `Query.auth.zcap` (`query Auth { auth { zcap { valid } } }`) — chain validity only, no invocation required. */
 export function checkAuthOnly(config: ZcapServerConfig, payload: InvocationHeaderPayload | null): PresentedZcap {
   if (config.unsafeMode) return structuralCheckAuthOnly(payload, config.trust)
 
