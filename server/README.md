@@ -188,6 +188,25 @@ fragment F on Query { __schema { types { name } } }
 
 `__typename` is not treated as introspection: it discloses only the type of something the caller already selected, the same reason `matchesAllowedAction` ignores it.
 
+## Invocation freshness
+
+An invocation proof binds the `invocationTarget` and the exact query text, so a captured header cannot be pointed at another endpoint or reused for a different query. It did not bind **time**: the only deadline was the *capability's* `expires`, typically months out, which left a captured header replayable for its one query for that whole period.
+
+`proof.created` is now checked against a window. It is inside the signed proof options, so it cannot be adjusted by whoever captured the header.
+
+| option | default | meaning |
+|---|---|---|
+| `invocationMaxAgeSeconds` | `300` | How long a signed invocation stays valid. `0` disables the check. |
+| `invocationClockSkewSeconds` | `60` | How far ahead of this server's clock a `created` may be. |
+
+Five minutes is the usual HTTP-Signatures window — long enough to absorb ordinary clock drift and a slow mobile network, short enough that a captured header is worth little. Skew is allowed in both directions because client clocks run fast about as often as slow, and rejecting those is the same outage as rejecting stale ones.
+
+A missing or unparseable `created` fails closed. Every signer in use sets it, so its absence is either a broken client or an attempt to opt out of the window — treating it as fresh would make the check trivially bypassable.
+
+Rejections surface as `INVOCATION_STALE`, distinct from `PROOF_INVALID`: a replayed header and a forged one warrant very different responses.
+
+This is a **behaviour change** for existing deployments. A client whose clock is off by more than the window will start failing. If that happens, fix the clock rather than widening the window — and `invocationMaxAgeSeconds: 0` restores the previous behaviour if you need to unblock first.
+
 ## Problem details
 
 Every rejection reason is a `ProblemDetail` (`{ typeURI, title, detail }`), drawn from a fixed vocabulary in `problemDetails.ts`:

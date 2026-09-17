@@ -53,6 +53,21 @@ export interface RealZcapServerConfig {
   rootCapability: Capability
   /** The target this request expects, derived from e.g. the Host header + a fixed path. */
   expectedInvocationTarget: string
+  /**
+   * How long a signed invocation stays acceptable, in seconds. Defaults
+   * to `DEFAULT_INVOCATION_MAX_AGE_SECONDS` (300). Set 0 to disable.
+   *
+   * Without this bound an invocation is replayable — for its one query
+   * against its one endpoint — until the *capability* expires, which is
+   * typically months. Raise it only for a deployment with genuinely
+   * unreliable clocks, and prefer fixing the clocks.
+   */
+  invocationMaxAgeSeconds?: number
+  /**
+   * Tolerance for a `created` ahead of this server's clock, in seconds.
+   * Defaults to `DEFAULT_INVOCATION_CLOCK_SKEW_SECONDS` (60).
+   */
+  invocationClockSkewSeconds?: number
 }
 
 export type ZcapServerConfig = UnsafeZcapServerConfig | RealZcapServerConfig
@@ -509,7 +524,10 @@ export function checkInvocation(
     }
   }
 
-  const invocationResult = verifyInvocationProof(leaf, payload?.invocation, rawQueryText)
+  const invocationResult = verifyInvocationProof(leaf, payload?.invocation, rawQueryText, {
+    maxAgeSeconds: config.invocationMaxAgeSeconds,
+    clockSkewSeconds: config.invocationClockSkewSeconds,
+  })
   if (!invocationResult.verified) {
     return {
       ok: false,

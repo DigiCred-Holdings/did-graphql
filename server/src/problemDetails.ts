@@ -34,6 +34,16 @@ function problemType(severity: ProblemSeverity, slug: string, title: string): Pr
 // Errors — verification fails; the request must be rejected.
 // ---------------------------------------------------------------------------
 
+/**
+ * The invocation is authentic but too old (or too far in the future) to
+ * accept — a replayed header rather than a live request.
+ */
+export const INVOCATION_STALE = problemType(
+  'error',
+  'INVOCATION_STALE',
+  'Invocation proof is outside the accepted freshness window',
+)
+
 /** A capability (leaf or root) is structurally invalid — missing a required field, or a field has the wrong shape. */
 export const MALFORMED_CAPABILITY = problemType(
   'error',
@@ -141,6 +151,7 @@ export const EXPIRES_SOON = problemType(
 // ---------------------------------------------------------------------------
 
 export const PROBLEM_TYPES = {
+  INVOCATION_STALE,
   MALFORMED_CAPABILITY,
   UNSUPPORTED_CONTROLLER,
   UNSUPPORTED_CRYPTOSUITE,
