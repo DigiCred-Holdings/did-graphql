@@ -21,12 +21,25 @@ export function materializeRoot(issuerDid: string, invocationTarget = GRAPHQL_EN
   }
 }
 
+export interface DelegateOverrides {
+  /** Extra capability fields (e.g. `caveat`) — signed along with the rest. */
+  caveat?: Record<string, unknown>[]
+  /**
+   * Override delegation proof options, e.g. `capabilityChain`. Applied
+   * before signing: these fields are inside the signature, so a test
+   * that edited them afterwards would break the proof and then pass for
+   * the wrong reason.
+   */
+  proofOptions?: Record<string, unknown>
+}
+
 export async function delegateGraphqlZcap(
   agent: Agent,
   issuer: DidKeyPair,
   invoker: DidKeyPair,
   invocationTarget = GRAPHQL_ENDPOINT,
   allowedAction: string[] = [AUTH_QUERY],
+  overrides: DelegateOverrides = {},
 ): Promise<Capability> {
   const root = materializeRoot(issuer.did, invocationTarget)
   const unsigned = {
@@ -37,10 +50,12 @@ export async function delegateGraphqlZcap(
     parentCapability: root.id,
     allowedAction,
     expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    ...(overrides.caveat ? { caveat: overrides.caveat } : {}),
   }
   const secured = await addDataIntegrityProof(agent, issuer, unsigned, {
     proofPurpose: 'capabilityDelegation',
     capabilityChain: [root.id],
+    ...(overrides.proofOptions ?? {}),
   })
   return secured as unknown as Capability
 }

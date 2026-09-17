@@ -35,6 +35,25 @@ function problemType(severity: ProblemSeverity, slug: string, title: string): Pr
 // ---------------------------------------------------------------------------
 
 /**
+ * The capability carries a `caveat` this library cannot evaluate.
+ *
+ * Rejected rather than ignored: a caveat is a signed *restriction*, so
+ * ignoring one grants more than the delegator intended.
+ */
+export const CAVEAT_UNSUPPORTED = problemType(
+  'error',
+  'CAVEAT_UNSUPPORTED',
+  'Capability carries a caveat this verifier cannot evaluate',
+)
+
+/** The signed `capabilityChain` disagrees with the chain actually presented. */
+export const CAPABILITY_CHAIN_MISMATCH = problemType(
+  'error',
+  'CAPABILITY_CHAIN_MISMATCH',
+  'Signed capabilityChain does not match the presented chain',
+)
+
+/**
  * The invocation is authentic but too old (or too far in the future) to
  * accept — a replayed header rather than a live request.
  */
@@ -151,6 +170,8 @@ export const EXPIRES_SOON = problemType(
 // ---------------------------------------------------------------------------
 
 export const PROBLEM_TYPES = {
+  CAVEAT_UNSUPPORTED,
+  CAPABILITY_CHAIN_MISMATCH,
   INVOCATION_STALE,
   MALFORMED_CAPABILITY,
   UNSUPPORTED_CONTROLLER,

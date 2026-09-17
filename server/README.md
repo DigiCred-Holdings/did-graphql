@@ -188,6 +188,18 @@ fragment F on Query { __schema { types { name } } }
 
 `__typename` is not treated as introspection: it discloses only the type of something the caller already selected, the same reason `matchesAllowedAction` ignores it.
 
+## Conformance with the ZCAP spec
+
+The capability data model, the `Capability-Invocation` header encoding, root dereferencing, `allowedAction`, `caveat` and `capabilityChain` all follow [the spec](https://w3c-ccg.github.io/zcap-spec/v0.4.0-rc.5/). Three things deliberately do not, and it is better to state them than to let someone discover them.
+
+**The invocation proof is not HTTP Signatures.** The spec signs the HTTP request itself via `Signature-Input`/`Signature`. This library sends an embedded `eddsa-jcs-2022` Data Integrity invocation instead, because that proof is byte-compatible with the signer on the issuing side and pinned by a cross-implementation fixture. Changing it would mean changing that signer, the wallet and the agent together. The practical difference is replay scope, which [Invocation freshness](#invocation-freshness) now bounds.
+
+**No `action` parameter on the header.** The spec identifies the invoked action with an `action` parameter. Here the action *is* a GraphQL document — up to a kilobyte, containing quotes and newlines — so putting it in a header parameter would need escaping, would inflate a header that exists in this shape precisely to stay under host limits, and would be the third copy of the same text (the request body and the signed `capabilityAction` are the other two). The spec's `action` is designed for coarse verbs like `read`; this design authorizes by literal document instead.
+
+**Root zcaps cannot be invoked (`id=` form).** Only delegated capabilities are accepted. A root here is purely a trust anchor: it carries no proof, and the verifier resolves it rather than receiving it. Admin-style access is expected to use a delegated leaf per admin, which gives per-admin revocation and attribution that direct root invocation would not.
+
+**Multi-level delegation is refused, not partly checked.** `capabilityChain` longer than root → leaf is rejected outright rather than verified one link deep and trusted for the rest.
+
 ## Invocation freshness
 
 An invocation proof binds the `invocationTarget` and the exact query text, so a captured header cannot be pointed at another endpoint or reused for a different query. It did not bind **time**: the only deadline was the *capability's* `expires`, typically months out, which left a captured header replayable for its one query for that whole period.

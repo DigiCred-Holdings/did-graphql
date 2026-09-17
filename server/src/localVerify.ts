@@ -24,6 +24,8 @@ import {
   ACTION_NOT_ALLOWED,
   EXPIRED,
   INVOCATION_MISSING,
+  CAPABILITY_CHAIN_MISMATCH,
+  CAVEAT_UNSUPPORTED,
   INVOCATION_STALE,
   INVOCATION_TARGET_MISMATCH,
   MALFORMED_CAPABILITY,
@@ -119,11 +121,24 @@ function structuralProblem(cap: Capability | undefined): ProblemDetail | null {
  * membership against a query, and does not check any invocation —
  * see {@link verifyInvocation} for the full gate used by real queries.
  */
+export interface VerifyChainOptions {
+  /**
+   * Accept a capability carrying caveats this verifier cannot evaluate.
+   *
+   * Default false, which is the safe direction: a caveat is a signed
+   * *restriction*, so honouring the capability while ignoring the caveat
+   * grants more than the delegator intended. Set true only where the
+   * caveats are known to be advisory.
+   */
+  allowUnsupportedCaveats?: boolean
+}
+
 export function verifyChain(
   leaf: Capability | undefined,
   rootCapability: Capability,
   expectedInvocationTarget: string,
   now: Date = new Date(),
+  options: VerifyChainOptions = {},
 ): VerificationResult {
   const structural = structuralProblem(leaf)
   if (structural) return fail(leaf, structural)
@@ -164,6 +179,23 @@ export function verifyChain(
       ),
     )
   }
+
+  // A caveat is a signed *restriction*. Accepting a capability while
+  // ignoring one grants more than the delegator intended, so an
+  // unevaluable caveat is a rejection rather than a shrug. This library
+  // evaluates none, because it attenuates by literal query document
+  // instead — so any caveat at all is unevaluable here.
+  const caveatProblem = checkCaveats(cap, options)
+  if (caveatProblem) return fail(cap, caveatProblem)
+
+  // `capabilityChain` is how the spec represents the delegation chain.
+  // This library resolves the root itself and checks `parentCapability`
+  // against it, which is equivalent for the single-level chains it
+  // issues — but the field is inside the delegation signature, so if a
+  // capability carries one it is authorization-relevant and must agree
+  // rather than be ignored.
+  const chainProblem = checkCapabilityChain(cap, rootCapability)
+  if (chainProblem) return fail(cap, chainProblem)
 
   if (!cap.expires) return fail(cap, problemDetail(MALFORMED_CAPABILITY, 'capability is missing "expires"'))
   const deadline = new Date(cap.expires)
@@ -335,6 +367,58 @@ function checkFreshness(
     return problemDetail(
       INVOCATION_STALE,
       `invocation "created" is ${Math.round(-ageSeconds)}s in the future, over the ${clockSkewSeconds}s clock-skew allowance`,
+    )
+  }
+  return undefined
+}
+
+
+/**
+ * Caveats this verifier understands. Empty by design: attenuation here
+ * is the `allowedAction` query list, not caveats. Listed as a named
+ * constant so the fail-closed behaviour reads as a decision rather than
+ * an omission, and so adding support later is a one-line change.
+ */
+const SUPPORTED_CAVEAT_TYPES: readonly string[] = []
+
+function checkCaveats(cap: Capability, options: VerifyChainOptions): ProblemDetail | undefined {
+  const caveats = cap.caveat
+  if (!Array.isArray(caveats) || caveats.length === 0) return undefined
+  if (options.allowUnsupportedCaveats) return undefined
+
+  const unsupported = caveats
+    .map((caveat) => (typeof caveat?.type === 'string' ? caveat.type : 'caveat without a "type"'))
+    .filter((type) => !SUPPORTED_CAVEAT_TYPES.includes(type))
+  if (unsupported.length === 0) return undefined
+
+  return problemDetail(
+    CAVEAT_UNSUPPORTED,
+    `capability carries ${unsupported.length} caveat(s) this verifier cannot evaluate (${unsupported.join(', ')}); ` +
+      'accepting it would grant more than the delegator restricted. Set allowUnsupportedCaveats to accept anyway.',
+  )
+}
+
+function checkCapabilityChain(cap: Capability, rootCapability: Capability): ProblemDetail | undefined {
+  const proof = firstProof(cap.proof)
+  const chain = proof?.capabilityChain
+  if (!Array.isArray(chain)) return undefined
+
+  // Entries are either a capability id or an embedded capability object.
+  const ids = chain.map((entry) =>
+    typeof entry === 'string' ? entry : ((entry as { id?: unknown })?.id as string | undefined),
+  )
+
+  if (ids.length !== 1) {
+    return problemDetail(
+      CAPABILITY_CHAIN_MISMATCH,
+      `capabilityChain has ${ids.length} entries; this verifier supports single-level delegation only ` +
+        '(root -> leaf), so a longer chain cannot be fully verified and is refused rather than partly checked',
+    )
+  }
+  if (ids[0] !== rootCapability.id) {
+    return problemDetail(
+      CAPABILITY_CHAIN_MISMATCH,
+      `capabilityChain names "${String(ids[0])}" as the root, but the resolved root is "${rootCapability.id}"`,
     )
   }
   return undefined

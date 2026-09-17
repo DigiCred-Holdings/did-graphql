@@ -68,6 +68,11 @@ export interface RealZcapServerConfig {
    * Defaults to `DEFAULT_INVOCATION_CLOCK_SKEW_SECONDS` (60).
    */
   invocationClockSkewSeconds?: number
+  /**
+   * Accept capabilities carrying caveats this library cannot evaluate.
+   * Defaults to false — see `VerifyChainOptions.allowUnsupportedCaveats`.
+   */
+  allowUnsupportedCaveats?: boolean
 }
 
 export type ZcapServerConfig = UnsafeZcapServerConfig | RealZcapServerConfig
@@ -472,7 +477,9 @@ export function checkAuthOnly(config: ZcapServerConfig, payload: InvocationHeade
   const leaf = payload?.chain?.[0]
   if (!leaf) return presentZcap(undefined, false, 'missing capability')
 
-  const result = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget)
+  const result = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget, new Date(), {
+    allowUnsupportedCaveats: config.allowUnsupportedCaveats,
+  })
   if (!result.verified) {
     return presentZcap(leaf, false, result.errors.map((e) => e.detail).join('; '), result.errors)
   }
@@ -504,7 +511,9 @@ export function checkInvocation(
     return { ok: true }
   }
 
-  const chainResult = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget)
+  const chainResult = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget, new Date(), {
+    allowUnsupportedCaveats: config.allowUnsupportedCaveats,
+  })
   if (!chainResult.verified) {
     return {
       ok: false,
