@@ -249,3 +249,8 @@ The `Capability-Invocation` header follows the [ZCAP spec's HTTP binding](https:
 The inflate is **bounded** (256KB output, 64KB input). These bytes are attacker-controlled and gzip expands cheaply, so an unbounded inflate here would be a memory-exhaustion vector.
 
 Legacy `x-zcap-invocation` is accepted permanently, so servers can be upgraded before clients — and they must be, since a client at `0.3.0`+ sends only the new header.
+
+Upgrading the package is **not sufficient** on its own. A server also has to:
+
+1. **Read the new header.** `decodeInvocationHeader(req.headers['capability-invocation'], req.headers['x-zcap-invocation'])`. Passing only the legacy header still compiles and still decodes old clients, so this fails silently as "missing capability" rather than as a type error.
+2. **Allow it through CORS.** Add `capability-invocation` to `access-control-allow-headers`. Miss this and a browser client fails its *preflight*, which surfaces as a CORS error mentioning nothing about capabilities.
