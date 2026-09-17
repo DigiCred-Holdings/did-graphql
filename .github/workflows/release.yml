@@ -8,7 +8,11 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
   contents: write
-  pull-requests: write
+  # `pull-requests: write` is deliberately absent. It never helped — org
+  # policy blocks Actions from opening PRs regardless of job permissions —
+  # and the Version Packages PR is now opened with the App installation
+  # token instead, which carries its own.
+  #
   # Lets the job mint an OIDC token for npm trusted publishing. Without
   # this the publish falls back to looking for a registry token, finds
   # none, and fails with ENEEDAUTH.
@@ -18,6 +22,18 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # Mints an installation token for the `digicred-releases` GitHub App,
+      # scoped to this repo and valid for an hour. GITHUB_TOKEN cannot open
+      # the Version Packages PR — org policy forbids Actions from creating
+      # pull requests, and the repo-level setting for it is locked — so
+      # every release needed that PR opened by hand. App installation
+      # tokens are not subject to that restriction.
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -45,16 +61,11 @@ jobs:
           # Named `publish-script` since action v2 — as plain `publish` it
           # is silently ignored with only an "Unexpected input(s)" warning.
           publish-script: npm run release
-          # v2 breaking change: the token must come through this input.
-          # A `GITHUB_TOKEN` env var, credentials left behind by
-          # actions/checkout, and tokens embedded in remote URLs are all
-          # explicitly no longer substitutes. This still resolves to the
-          # default token today, so the behaviour is unchanged — but when
-          # this is swapped for a GitHub App installation token (to get
-          # Version Packages PRs created automatically again, which org
-          # policy currently forbids GITHUB_TOKEN from doing), it has to
-          # be set here. Passing it as env would fail silently.
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Must be this input, not an env var: action v2 explicitly
+          # stopped accepting `GITHUB_TOKEN` from the environment, from
+          # actions/checkout's leftover credentials, or from a remote URL.
+          # Set as env, a custom token like this one is ignored silently.
+          github-token: ${{ steps.app-token.outputs.token }}
         # No NODE_AUTH_TOKEN and no `env:` block at all: publishing
         # authenticates via OIDC against the trusted publisher configured
         # for each package on npmjs.com (org `digicredholdingsinc`, this
