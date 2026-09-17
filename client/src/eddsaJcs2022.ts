@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js'
-import canonicalize from 'canonicalize'
+import { canonicalize } from './jcs.js'
 
 /**
  * Spec (eddsa-jcs-2022): sha256(JCS(proofOptions)) || sha256(JCS(document)).
