@@ -11,3 +11,5 @@ Stop ignoring `caveat` and `capabilityChain`. Both are inside the delegation sig
 Neither changes behaviour for capabilities this system already issues: the signer has always emitted a conformant single-entry `capabilityChain`, and nothing issues caveats. There is now a test pinning that, so a regression in the signer surfaces rather than passing silently.
 
 Also documents the three places this library deliberately diverges from the spec — HTTP Signatures for the invocation proof, no `action` header parameter, and no root-zcap invocation — so they read as decisions rather than omissions.
+
+Also fixes the header syntax against the spec's own examples. The value is now emitted **bare** (`capability=<base64url…>`), which is what §Example 9 and 10 show — unpadded base64url contains nothing needing quotes. More importantly the parser previously *required* quotes, so it rejected the spec's own syntax; both forms are now accepted. Safe to change outright because this header shape has not been released yet.

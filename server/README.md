@@ -192,9 +192,15 @@ fragment F on Query { __schema { types { name } } }
 
 The capability data model, the `Capability-Invocation` header encoding, root dereferencing, `allowedAction`, `caveat` and `capabilityChain` all follow [the spec](https://w3c-ccg.github.io/zcap-spec/v0.4.0-rc.5/). Three things deliberately do not, and it is better to state them than to let someone discover them.
 
+**The header value is emitted bare, and parsed either way.** The spec's examples show `capability={base64url(gzip(json(capability)))}` with no quotes; unpadded base64url contains nothing that needs quoting. Both forms are accepted on parse, since a sender may reasonably quote.
+
+**Invocation via HTTP trailers is not supported.** §Example 10 shows the same headers sent as trailers under chunked encoding. `decodeInvocationHeader` reads request headers, not trailers.
+
 **The invocation proof is not HTTP Signatures.** The spec signs the HTTP request itself via `Signature-Input`/`Signature`. This library sends an embedded `eddsa-jcs-2022` Data Integrity invocation instead, because that proof is byte-compatible with the signer on the issuing side and pinned by a cross-implementation fixture. Changing it would mean changing that signer, the wallet and the agent together. The practical difference is replay scope, which [Invocation freshness](#invocation-freshness) now bounds.
 
-**No `action` parameter on the header.** The spec identifies the invoked action with an `action` parameter. Here the action *is* a GraphQL document — up to a kilobyte, containing quotes and newlines — so putting it in a header parameter would need escaping, would inflate a header that exists in this shape precisely to stay under host limits, and would be the third copy of the same text (the request body and the signed `capabilityAction` are the other two). The spec's `action` is designed for coarse verbs like `read`; this design authorizes by literal document instead.
+**No `action` property.** This is *not* a divergence. §4.3 makes `action` optional — a target "MAY support the `action` property ... as one common behavioral direction technique" — and states that "targets are free to choose their own mechanisms for directing behavior". Authorizing by literal GraphQL document is such a mechanism.
+
+It would not fit even if it were required: `action` "points to a URI as a form of vocabulary" (`https://datastore.example/WriteFile`), so it names a coarse verb from a controlled vocabulary. A GraphQL document is neither a URI nor coarse, and a URI naming `Query` or `Mutation` would grant every query or every mutation — the opposite of per-document authorization. The delegated examples (§Example 9, 10) carry only `capability=`; the action is the request body, bound by `Content-Digest` and the signature.
 
 **Root zcaps cannot be invoked (`id=` form).** Only delegated capabilities are accepted. A root here is purely a trust anchor: it carries no proof, and the verifier resolves it rather than receiving it. Admin-style access is expected to use a delegated leaf per admin, which gives per-admin revocation and attribution that direct root invocation would not.
 

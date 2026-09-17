@@ -75,7 +75,7 @@ test('DidGraphQLClient.checkAuth sends an unsigned query Auth { auth { zcap { va
   // of asserting here rather than round-tripping through the client is
   // that the client's fflate gzip and the server's zlib gunzip are
   // different implementations that have to agree.
-  assert.match(capturedHeader, /^zcap capability="/)
+  assert.match(capturedHeader, /^zcap capability=[^\s,"]+/)
   const payload = decodeServerHeader(capturedHeader)
   assert.ok(payload)
   assert.equal(payload.chain[0]?.id, capability.id)

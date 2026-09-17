@@ -118,10 +118,13 @@ function gunzipJson(base64url: string): unknown {
  */
 function parseCapabilityInvocation(headerValue: string): InvocationHeaderPayload | null {
   const params = new Map<string, string>()
-  // Deliberately not a full RFC-8941 parser: the accepted grammar is
-  // exactly what this library emits, so anything else fails closed.
-  for (const match of headerValue.matchAll(/([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*"([^"]*)"/g)) {
-    params.set(match[1]!, match[2]!)
+  // Both quoted and bare values. The spec's own examples show the value
+  // bare (`capability={base64url(gzip(json(capability)))}`), and since
+  // base64url without padding contains no character needing a quoted
+  // string, a conformant sender has no reason to quote it. Accepting
+  // only the quoted form — as this did — rejects the spec's own syntax.
+  for (const match of headerValue.matchAll(/([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*(?:"([^"]*)"|([^\s,;"]+))/g)) {
+    params.set(match[1]!, match[2] ?? match[3] ?? '')
   }
 
   const capabilityParam = params.get('capability')
