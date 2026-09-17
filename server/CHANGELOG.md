@@ -1,5 +1,78 @@
 # @digicred-holdings/did-graphql-server
 
+## 0.7.0
+
+### Minor Changes
+
+- 971b8dc: Support RFC 9421 HTTP Message Signatures — the ZCAP spec's own invocation proof.
+  
+  A request signed this way carries `Content-Digest`, `Signature-Input` and `Signature`, over exactly the components the spec's Example 9 lists: `@method`, `@path`, `capability-invocation`, `content-digest`, `content-type`. That binds the proof to *this* HTTP request rather than to a standalone document.
+  
+  Clients opt in with a `httpSignature` signer, the same injected shape as `invokeCapability` — this package still holds no keys. Servers pass the request to `checkInvocation`'s new optional fourth argument; a signature cannot be verified without the method, path, headers and body, none of which are reconstructible from the capability header.
+  
+  The embedded `eddsa-jcs-2022` invocation still works and is still accepted, so existing signers migrate on their own schedule. They are not equivalent: the embedded proof binds the target URL and the query text, while an HTTP signature additionally binds the method, the path, the capability header, and the exact request body. A request carrying `Signature-Input` is verified that way and the embedded path is not consulted, so a weak proof cannot be presented alongside a strong one.
+  
+  The configured freshness window (`invocationMaxAgeSeconds`) applies to both, reading `created` from `Signature-Input` on the signature path.
+  
+  The signature base is built independently in each package, since a resource server must not depend on the client. A test asserts the two produce byte-identical output — without it, any drift would surface only as an opaque "signature failed verification".
+- fde3102: Reject replayed invocations: `proof.created` is now checked against a freshness window.
+  
+  An invocation proof binds the `invocationTarget` and the exact query text, so a captured header could never be pointed at another endpoint or reused for a different query. It did not bind **time**. The only deadline was the *capability's* `expires` — months out in real deployments — so anyone who captured one header could replay that one query against that one endpoint for the whole of that period. TLS was the only thing preventing capture.
+  
+  `proof.created` is inside the signed proof options, so it cannot be adjusted by whoever captured the header. It is now checked against `invocationMaxAgeSeconds` (default 300) with `invocationClockSkewSeconds` (default 60) of tolerance in both directions, since client clocks run fast about as often as slow. Rejections surface as `INVOCATION_STALE` rather than `PROOF_INVALID`, because a replayed header and a forged one call for different responses.
+  
+  A missing or unparseable `created` fails closed. Every signer in use sets it, so its absence is either a broken client or an attempt to opt out of the window.
+  
+  **This is a behaviour change.** A client whose clock is off by more than the window will start failing where it previously succeeded. Fix the clock rather than widening the window; `invocationMaxAgeSeconds: 0` restores the old behaviour if you need to unblock first.
+  
+  This closes the gap in the way that needs no changes outside this library. The ZCAP spec's own answer is HTTP Signatures, whose covered `date` component does the same job — adopting that would mean changing the wallet signer, ACA-Py and companion-app, and is a separate decision.
+- 2ba7afa: Send the invocation in a `Capability-Invocation` header, encoded as the ZCAP spec's HTTP binding specifies.
+  
+  A real deployment reached 9 named queries and its `x-zcap-invocation` header measured **9,724 bytes** — past the limit on both deployed hosts, which cut off between 8KB and 16KB. It failed badly: one proxy returns a bare `400`, surfacing in the wallet as "Graphql transport error: 400" rather than the `431 Request Header Fields Too Large` the other host correctly returns, so the cause reads as a GraphQL fault and is actually header size.
+  
+  The spec already solves this. Its HTTP binding carries the capability by "serializing it to JSON, gzipping the result, and then base64url-encoding the gzipped JSON" — so compression here is not an optimization bolted on, it is what conformance requires. The same capability now encodes to **1,783 bytes**.
+  
+  `allowedAction` is untouched: it is inside the delegation signature, and it must stay parseable GraphQL for the exact-match and field-subset gates and for the other implementations that check it. What changed is the transport encoding around the capability, which the verifier gunzips back to byte-identical JSON. Compressing the entries individually would have been both worse and more invasive — the nine queries share heavy token structure, so they are 918 bytes compressed together against 2,294 apart.
+  
+  Also in this release:
+  
+  - `InvocationHeaderTooLargeError`, thrown before any HTTP when the built header exceeds `maxHeaderBytes` (default 8192), naming the `allowedAction` count — because the proxy-side failure is so poorly signalled.
+  - HTTP 431 now produces an error naming the header and its size.
+  - `describeInvocationHeader` distinguishes an absent header from a truncated one. Both previously surfaced as "missing capability", which is precisely what made the original failure look like something else.
+  - The inflate is bounded (256KB out, 64KB in) — the server now decompresses attacker-controlled bytes, and an unbounded inflate there would be a memory-exhaustion vector.
+  
+  Consumer migration is deliberately small and one-time. `decodeInvocationHeader` now takes whatever holds the request headers — Node's `req.headers`, a fetch `Headers`, a plain record — and finds what it needs, so a server never names a header again and a future header change is picked up by upgrading the package. `zcapAllowedHeaders('content-type')` and `ZCAP_REQUEST_HEADERS` do the same for `access-control-allow-headers`, which otherwise fails a browser preflight as a CORS error mentioning nothing about capabilities. `PreparedRequest.headers` is now `Record<string, string>` for the same reason: which headers the client sends is the library's business, not a compile-time contract.
+  
+  **Upgrade servers before clients.** The server accepts the legacy `x-zcap-invocation` permanently, so an old client against a new server is fine; a client at this version against an older server fails on every request. `encodeInvocationHeader` / `decodeInvocationHeader` stay exported and deprecated.
+- 94c253c: Stop ignoring `caveat` and `capabilityChain`. Both are inside the delegation signature, so both are authorization-relevant, and both were previously accepted and never read.
+  
+  **`caveat` now fails closed.** A caveat is a signed *restriction*, so honouring a capability while ignoring its caveat grants strictly more than the delegator intended — the one direction a verifier must not err in. This library evaluates no caveat types, because it attenuates by literal query document instead, so any caveat at all is unevaluable here and is refused as `CAVEAT_UNSUPPORTED`. `allowUnsupportedCaveats: true` accepts them, for a deployment that knows its caveats are advisory.
+  
+  **`capabilityChain` is now checked** against the resolved root when present. A capability could previously assert one chain while being verified against another. A chain longer than root → leaf is refused outright rather than verified one link deep and trusted for the rest, surfacing as `CAPABILITY_CHAIN_MISMATCH`.
+  
+  Neither changes behaviour for capabilities this system already issues: the signer has always emitted a conformant single-entry `capabilityChain`, and nothing issues caveats. There is now a test pinning that, so a regression in the signer surfaces rather than passing silently.
+  
+  Also documents the three places this library deliberately diverges from the spec — HTTP Signatures for the invocation proof, no `action` header parameter, and no root-zcap invocation — so they read as decisions rather than omissions.
+  
+  Also fixes the header syntax against the spec's own examples. The value is now emitted **bare** (`capability=<base64url…>`), which is what §Example 9 and 10 show — unpadded base64url contains nothing needing quotes. More importantly the parser previously *required* quotes, so it rejected the spec's own syntax; both forms are now accepted. Safe to change outright because this header shape has not been released yet.
+
+### Patch Changes
+
+- 13fbddf: Bump the two production dependencies that had drifted: `canonicalize` to `^5.0.0` (both packages) and `@noble/hashes` to `^2.4.0` (client).
+  
+  Both arrived as Dependabot PRs that changed the declared ranges without a changeset, so nothing was released and the published manifests still advertised the old ones. That is not cosmetic for `canonicalize`: the published range `^2.0.0` cannot resolve 5.x, so no consumer would have received the new version until a release went out.
+  
+  `canonicalize` is load-bearing here — it produces the bytes that get hashed and signed for `eddsa-jcs-2022` — so 2.1.0 and 5.0.0 were compared directly rather than assumed compatible. Output is byte-identical for every well-formed input tested, including a real delegated ZCAP capability and its proof options. The majors are packaging changes (ESM-only from 3.x, a Node engines floor in 5.x), not algorithm changes.
+  
+  5.x is stricter on malformed input: it rejects lone surrogates, which 2.x serialized. JSON permits lone surrogates, so a client-supplied capability can contain one — but `verifyEddsaJcs2022` already wraps the hash step in `try`/`catch` and returns `false`, so this surfaces as an ordinary `PROOF_INVALID` rejection rather than an error escaping the verifier. Such a document would have failed signature verification under 2.x anyway; it now fails earlier and for a more accurate reason.
+- 48e2ad3: Fix a privilege escalation in field-subset matching: a capability granting a query authorized the same-named mutation.
+  
+  `allowedAction` matching has two paths. The exact path compares document text and was never affected — the operation keyword is part of what it compares. The **field-subset** fallback parsed each document and compared root fields and their nested field names, but never read the operation type. So a capability granting `query Thing { thing { a b } }` also authorized `mutation Thing { thing { a b } }`, wherever a schema exposes the same name on both `Query` and `Mutation`. A read-only grant permitted a write.
+  
+  Subset matching now requires the operation types to match. Narrowing a granted mutation still works — the fix constrains which entries a document can match, not whether mutations can attenuate. An anonymous `{ ... }` counts as a query, per GraphQL's own default.
+  
+  No capability needs reissuing. This only ever widened what an existing capability authorized, so the fix can only narrow it back to what was intended.
+
 ## 0.6.0
 
 ### Minor Changes
