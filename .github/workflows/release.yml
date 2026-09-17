@@ -41,8 +41,10 @@ jobs:
       - name: Create Release PR or publish to npm
         uses: changesets/action@v2
         with:
-          # runs `npm run build` (client + server) then `changeset publish`
-          publish: npm run release
+          # runs `npm run build` (client + server) then `changeset publish`.
+          # Named `publish-script` since action v2 — as plain `publish` it
+          # is silently ignored with only an "Unexpected input(s)" warning.
+          publish-script: npm run release
           # v2 breaking change: the token must come through this input.
           # A `GITHUB_TOKEN` env var, credentials left behind by
           # actions/checkout, and tokens embedded in remote URLs are all
