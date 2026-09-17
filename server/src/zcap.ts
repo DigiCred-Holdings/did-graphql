@@ -15,11 +15,15 @@
 
 import { gunzipSync } from 'node:zlib'
 
+import { verifyHttpSignature, type HttpSignatureRequest } from './httpSignature.js'
+
 import { GraphQLError, parse } from 'graphql'
 import type { DocumentNode, OperationDefinitionNode, SelectionSetNode } from 'graphql'
 import type { Capability, SignedInvocation } from './localVerify.js'
 import {
   verifyActionAllowed,
+  DEFAULT_INVOCATION_CLOCK_SKEW_SECONDS,
+  DEFAULT_INVOCATION_MAX_AGE_SECONDS,
   verifyChain as verifyChainLocally,
   verifyInvocationProof,
 } from './localVerify.js'
@@ -278,6 +282,30 @@ export function describeInvocationHeader(
   return payload ? { payload, reason: 'ok' } : { payload: null, reason: 'undecodable' }
 }
 
+/**
+ * `created` in `Signature-Input` is the RFC 9421 analogue of the
+ * embedded proof's `created`, so it gets the same window rather than a
+ * second, separately-configured one.
+ */
+function checkHttpSignatureFreshness(
+  created: number | undefined,
+  config: { invocationMaxAgeSeconds?: number; invocationClockSkewSeconds?: number },
+): string | undefined {
+  const maxAgeSeconds = config.invocationMaxAgeSeconds ?? DEFAULT_INVOCATION_MAX_AGE_SECONDS
+  if (maxAgeSeconds <= 0) return undefined
+  if (created === undefined) return 'Signature-Input is missing created'
+
+  const clockSkewSeconds = config.invocationClockSkewSeconds ?? DEFAULT_INVOCATION_CLOCK_SKEW_SECONDS
+  const ageSeconds = Date.now() / 1000 - created
+  if (ageSeconds > maxAgeSeconds) {
+    return `invocation was signed ${Math.round(ageSeconds)}s ago, over the ${maxAgeSeconds}s freshness window`
+  }
+  if (-ageSeconds > clockSkewSeconds) {
+    return `invocation "created" is ${Math.round(-ageSeconds)}s in the future, over the ${clockSkewSeconds}s clock-skew allowance`
+  }
+  return undefined
+}
+
 function normalizeQuery(text: string | undefined): string {
   return String(text ?? '').replace(/\s+/g, ' ').trim()
 }
@@ -517,6 +545,13 @@ export function checkInvocation(
   config: ZcapServerConfig,
   payload: InvocationHeaderPayload | null,
   rawQueryText: string,
+  /**
+   * The HTTP request, when the caller can supply it. Required to verify
+   * an RFC 9421 signature — that proof covers the method, path, headers
+   * and body, none of which are reconstructible from the payload alone.
+   * Omit it and only the embedded Data Integrity path is available.
+   */
+  httpRequest?: HttpSignatureRequest,
 ): InvocationCheckResult {
   const leaf = payload?.chain?.[0]
   if (!leaf) return { ok: false, code: 'CAPABILITY_INVALID', message: 'missing capability' }
@@ -550,6 +585,22 @@ export function checkInvocation(
       message: actionResult.errors.map((e) => e.detail).join('; '),
       problems: actionResult.errors,
     }
+  }
+
+  // Two proof mechanisms. RFC 9421 HTTP Message Signatures is the ZCAP
+  // spec's own, and binds the whole request; the embedded Data Integrity
+  // invocation binds the target URL and the query text only. A request
+  // carrying an HTTP signature is verified that way and the embedded
+  // path is not consulted, so a sender cannot present a weak proof
+  // alongside a strong one and have the weak one accepted.
+  if (httpRequest?.signatureInput) {
+    const sig = verifyHttpSignature(httpRequest, leaf)
+    if (!sig.verified) {
+      return { ok: false, code: 'INVOCATION_INVALID', message: sig.reason }
+    }
+    const stale = checkHttpSignatureFreshness(sig.created, config)
+    if (stale) return { ok: false, code: 'INVOCATION_INVALID', message: stale }
+    return { ok: true }
   }
 
   const invocationResult = verifyInvocationProof(leaf, payload?.invocation, rawQueryText, {
