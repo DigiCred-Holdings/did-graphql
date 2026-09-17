@@ -27,7 +27,12 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20.19.2'
+          # Matches the release job. `@changesets/cli` v3 requires
+          # ^22.11 || ^24 || >=26 and hard-fails below it (`enableCompileCache
+          # is not a function`), so 20.x can no longer install this repo's
+          # devDependencies and run. Testing on the version that publishes is
+          # the right default anyway.
+          node-version: '24'
           cache: 'npm'
 
       - run: npm ci
