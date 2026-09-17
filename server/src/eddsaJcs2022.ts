@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, verify } from 'node:crypto'
 
 import bs58 from 'bs58'
-import canonicalize from 'canonicalize'
+import { canonicalize } from './jcs.js'
 
 import { didFromVerificationMethod, ed25519PublicKeyFromDidKey, isDidKey } from './didKey.js'
 

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import type { Agent } from '@credo-ts/core'
 import { DidKey } from '@credo-ts/core'
 import bs58 from 'bs58'
-import canonicalize from 'canonicalize'
+import { canonicalize } from '../../client/src/jcs.js'
 
 import type { DidKeyPair } from './credoAgent.js'
 
