@@ -24,6 +24,7 @@ import {
   ACTION_NOT_ALLOWED,
   EXPIRED,
   INVOCATION_MISSING,
+  INVOCATION_STALE,
   INVOCATION_TARGET_MISMATCH,
   MALFORMED_CAPABILITY,
   PARENT_CAPABILITY_MISMATCH,
@@ -224,10 +225,40 @@ export function verifyActionAllowed(
  * Assumes {@link verifyChain} (and, for a real query, `allowedAction`
  * membership) already passed for `leaf`.
  */
+/**
+ * How long a signed invocation stays acceptable.
+ *
+ * The invocation proof binds the target URL and the exact query text, so
+ * a captured header cannot be redirected or reused for a different
+ * query — but without a freshness bound it stays replayable for that one
+ * query until the *capability* expires, which is typically months. Five
+ * minutes is the usual HTTP-Signatures window: long enough to absorb
+ * ordinary clock drift and a slow mobile network, short enough that a
+ * captured header is worth little.
+ */
+export const DEFAULT_INVOCATION_MAX_AGE_SECONDS = 300
+
+/**
+ * Tolerance for a `created` in the future. Client clocks run fast as
+ * often as slow, and rejecting those is the same outage as rejecting
+ * stale ones.
+ */
+export const DEFAULT_INVOCATION_CLOCK_SKEW_SECONDS = 60
+
+export interface InvocationFreshnessOptions {
+  /** Seconds a signed invocation stays valid. 0 disables the check. */
+  maxAgeSeconds?: number
+  /** Seconds a `created` may be ahead of this server's clock. */
+  clockSkewSeconds?: number
+  /** Injectable for tests. */
+  now?: Date
+}
+
 export function verifyInvocationProof(
   leaf: Capability,
   invocation: SignedInvocation | undefined,
   rawQueryText: string,
+  freshness: InvocationFreshnessOptions = {},
 ): VerificationResult {
   const cap = leaf
 
@@ -256,9 +287,55 @@ export function verifyInvocationProof(
   if (proof.capabilityAction !== rawQueryText) {
     return fail(cap, problemDetail(MALFORMED_CAPABILITY, 'invocation capabilityAction does not match the query'))
   }
+  // Ordered after the cheap structural checks and before the signature
+  // verification: a stale invocation is rejected either way, and this
+  // avoids an Ed25519 verify on something already known to be too old.
+  const maxAgeSeconds = freshness.maxAgeSeconds ?? DEFAULT_INVOCATION_MAX_AGE_SECONDS
+  if (maxAgeSeconds > 0) {
+    const stale = checkFreshness(proof.created, maxAgeSeconds, freshness)
+    if (stale) return fail(cap, stale)
+  }
+
   if (!verifyEddsaJcs2022(invocation as unknown as Record<string, unknown>, PROOF_PURPOSE_INVOCATION)) {
     return fail(cap, problemDetail(PROOF_INVALID, 'invocation proof failed verification'))
   }
 
   return ok(cap)
+}
+
+/**
+ * `created` is inside the signed proof options, so it cannot be adjusted
+ * by whoever captured the header — checking it is what turns an
+ * indefinitely replayable invocation into one with a short life.
+ * Returns a problem, or undefined when fresh.
+ */
+function checkFreshness(
+  created: unknown,
+  maxAgeSeconds: number,
+  { clockSkewSeconds = DEFAULT_INVOCATION_CLOCK_SKEW_SECONDS, now = new Date() }: InvocationFreshnessOptions,
+): ProblemDetail | undefined {
+  if (typeof created !== 'string' || !created) {
+    // Fail closed. Every signer in use sets `created`, so an absent one
+    // is either a broken client or an attempt to opt out of the window.
+    return problemDetail(INVOCATION_STALE, 'invocation proof is missing "created"')
+  }
+  const createdAt = new Date(created)
+  if (Number.isNaN(createdAt.getTime())) {
+    return problemDetail(INVOCATION_STALE, `invocation proof "created" is not parseable: ${created}`)
+  }
+
+  const ageSeconds = (now.getTime() - createdAt.getTime()) / 1000
+  if (ageSeconds > maxAgeSeconds) {
+    return problemDetail(
+      INVOCATION_STALE,
+      `invocation was signed ${Math.round(ageSeconds)}s ago, over the ${maxAgeSeconds}s freshness window`,
+    )
+  }
+  if (-ageSeconds > clockSkewSeconds) {
+    return problemDetail(
+      INVOCATION_STALE,
+      `invocation "created" is ${Math.round(-ageSeconds)}s in the future, over the ${clockSkewSeconds}s clock-skew allowance`,
+    )
+  }
+  return undefined
 }

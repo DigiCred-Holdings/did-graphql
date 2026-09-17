@@ -51,6 +51,13 @@ export async function invokeGraphqlZcap(
   capability: Capability,
   capabilityAction: string,
   invocationTarget: string,
+  /**
+   * Override the proof's `created`. `created` is inside the signed proof
+   * options, so freshness tests have to set it before signing rather
+   * than editing it after — editing would break the signature and the
+   * test would pass for the wrong reason.
+   */
+  created?: string,
 ): Promise<SignedInvocation> {
   const unsigned = {
     '@context': ['https://w3id.org/zcap/v1', 'https://w3id.org/security/data-integrity/v2'],
@@ -61,6 +68,7 @@ export async function invokeGraphqlZcap(
     capability: capability.id,
     capabilityAction,
     invocationTarget,
+    ...(created ? { created } : {}),
   })
   return secured as unknown as SignedInvocation
 }
