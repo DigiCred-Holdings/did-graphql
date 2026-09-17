@@ -74,36 +74,11 @@ Subscriptions are **not implemented**. They need a persistent transport (WebSock
 
 ## Releasing
 
-Both packages are public on npmjs.org under the **`@digicredholdingsinc`** scope. Consumers need no registry auth at all — no `.npmrc`, no token, no `NPM_TOKEN` plumbed through a Dockerfile. That is the whole reason for being here rather than on GitHub Packages, which has no anonymous-read path.
+Both packages are public on npmjs.org under the **`@digicredholdingsinc`** scope, and consumers need no registry auth — no `.npmrc`, no token. CI needs none either: publishing authenticates by OIDC against an npm trusted publisher, so no registry credential exists in this repo, its secrets, or on anyone's laptop.
 
-Releases are cut by [Changesets](https://github.com/changesets/changesets). Add a changeset with the change that needs one:
+Releases are cut by [Changesets](https://github.com/changesets/changesets) — add one with `npm run changeset`, merge, then merge the Version Packages PR that follows.
 
-```bash
-npm run changeset
-```
-
-Merging that to `main` makes `changesets/action` open a **Version Packages** PR (bumps versions, writes `CHANGELOG.md`). Merging *that* PR publishes.
-
-### Publishing auth: trusted publishing, no token
-
-`release.yml` holds no registry credential. It mints a short-lived OIDC token from its GitHub Actions identity, which npm checks against a **trusted publisher** configured per package on npmjs.com (org, repo, workflow filename). Provenance attestations are generated automatically on that path, which is why this repo has to stay public — npm refuses provenance for a private source repo.
-
-Three things have to stay true for that to keep working, and each has bitten a project somewhere:
-
-- `permissions: id-token: write` on the job. Without it there is no OIDC token, npm falls back to looking for a registry token, finds none, and fails `ENEEDAUTH`.
-- Node >= 22.14.0 **and** npm >= 11.5.1. Node 24 has shipped npm 11.x builds below that floor, so the workflow installs `npm@latest` explicitly rather than trusting the runner image.
-- The trusted publisher on npmjs.com names `.github/workflows/release.yml`. Renaming or moving this file breaks publishing until the publisher config is updated to match.
-
-### Adding a new package to this repo
-
-npm cannot create a package from OIDC — a trusted publisher can only be configured for a package that already exists, and npm has [no pending-publisher mechanism](https://github.com/npm/cli/issues/8544) to pre-register one. So a brand-new package needs a **one-time manual first publish** from a machine logged into the org:
-
-```bash
-npm run build
-cd <new-package> && npm publish --access public
-```
-
-Then configure its trusted publisher on npmjs.com, after which every subsequent release goes through CI with no token. This is a bootstrap step only — it is not how ordinary releases work.
+**[RELEASING.md](RELEASING.md)** has the rest: the invariants that keep trusted publishing working, how to verify a published version really came from CI, what to do when adding a new package (npm can't create one from OIDC), the WebAuthn gotcha on manual publishes, and a troubleshooting table of the errors that point somewhere other than their cause.
 
 ## Tests
 
