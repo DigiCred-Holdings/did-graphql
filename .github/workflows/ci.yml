@@ -12,7 +12,16 @@ concurrency:
 
 jobs:
   build-and-test:
+    # `server` declares `graphql: ^16.14.2 || ^17.0.0`. Both majors are
+    # tested, because a union range that only ever runs against one of
+    # them is a claim, not a guarantee — and the one it doesn't run
+    # against is the one that breaks quietly.
+    name: build-and-test (graphql ${{ matrix.graphql }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        graphql: ['16', '17']
     steps:
       - uses: actions/checkout@v7
 
@@ -22,6 +31,18 @@ jobs:
           cache: 'npm'
 
       - run: npm ci
+
+      # --no-save: the lockfile pins 17, and this leg swaps in 16 without
+      # rewriting it.
+      - name: Install graphql ${{ matrix.graphql }}
+        run: npm install --no-save graphql@${{ matrix.graphql }}
+
+      # `npm ls`, not `require('graphql/package.json')` — graphql 17's
+      # exports map does not expose ./package.json, so requiring it
+      # throws ERR_PACKAGE_PATH_NOT_EXPORTED and this step would fail on
+      # exactly the leg it exists to verify.
+      - name: Confirm the resolved version
+        run: npm ls graphql
 
       - name: Build (typechecks client + server via tsc)
         run: npm run build
