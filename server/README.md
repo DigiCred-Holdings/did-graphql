@@ -10,6 +10,8 @@ See the [repo README](../README.md) for how the pieces fit. This page is the ser
 npm install @digicredholdingsinc/did-graphql-server
 ```
 
+Public on npmjs.org — no registry auth, no `.npmrc`, no token. The tarball ships a prebuilt `dist/`, so nothing compiles at install time.
+
 Node-only. Depends on `graphql` (query parse / field-subset), `bs58` and `canonicalize` (did:key decoding, JCS canonicalization for `eddsa-jcs-2022`).
 
 ## Design: who resolves what
