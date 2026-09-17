@@ -1,0 +1,53 @@
+version: 2
+
+updates:
+  # One entry covers both workspaces: Dependabot reads the root manifest's
+  # `workspaces` and the single root lockfile, which is what client/ and
+  # server/ actually resolve against.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+    # Only widen a declared range when a fix genuinely requires it. The
+    # default ("auto") likes to bump ranges that were already satisfied,
+    # which for a published library means consumer-visible churn in
+    # exchange for nothing.
+    versioning-strategy: increase-if-necessary
+
+    # Minor and patch land as two grouped PRs a week rather than a dozen
+    # individual ones. Majors are deliberately left out of the groups so
+    # they arrive one at a time and get read properly.
+    #
+    # Worth keeping in mind when triaging: almost everything here will be
+    # a devDependency. Both published packages have four transitive
+    # dependencies each, none of them shared with the @credo-ts tree that
+    # the integration tests pull in — so a scary-looking alert is usually
+    # invisible to anyone who installs these packages. Check which group
+    # a PR landed in before treating it as urgent.
+    groups:
+      production-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  # The release workflow authenticates by OIDC, so the actions it runs are
+  # part of the publishing trust path and worth keeping current. This also
+  # surfaces runtime deprecations: as of this writing every Release run
+  # warns that actions/checkout@v4 and actions/setup-node@v4 target the
+  # deprecated Node 20 and are being forced onto Node 24.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
