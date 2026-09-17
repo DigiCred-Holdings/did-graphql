@@ -37,6 +37,6 @@
   "dependencies": {
     "@noble/hashes": "^2.4.0",
     "bs58": "^6.0.0",
-    "canonicalize": "^2.0.0"
+    "canonicalize": "^5.0.0"
   }
 }
