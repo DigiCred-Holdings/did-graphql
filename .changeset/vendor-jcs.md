@@ -11,6 +11,6 @@ None of that buys anything. JCS is RFC 8785 and frozen; `canonicalize` 2.1.0 and
 
 `canonicalize` stays as a **dev** dependency and the vendored implementation is differentially tested against it on every CI run, so equivalence with the reference is proven rather than assumed. The existing cross-implementation fixture — which pins `hashEddsaJcs2022` byte-for-byte against CrMS's Python signer — still passes unchanged, which is the real evidence that the signed bytes did not move.
 
-`jcs.ts` is duplicated into both packages, because a resource server must not depend on the client. A test asserts the two files are literally identical, so a drift fails at build time rather than as a verification failure between the two packages.
+`jcs.ts` is duplicated into both packages, because a resource server must not depend on the client. A test asserts the two files are literally identical, so a drift fails in CI (`npm test`) rather than as a verification failure between the two packages. Note it is the test suite that catches this, not `npm run build`.
 
 Also considered and rejected: `json-canonicalize@3`, which is dual-format and current but emits a bare `undefined` for symbol-valued properties, producing output that is not valid JSON. There is now a test asserting our output always parses.

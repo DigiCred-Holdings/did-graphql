@@ -49,9 +49,13 @@ export function canonicalize(value: unknown): string {
   }
 
   if (Array.isArray(value)) {
-    // Array holes and unserializable entries become null, exactly as
-    // JSON.stringify does — dropping them would change the length.
-    const items = value.map((entry) =>
+    // Array.from, not map: map SKIPS holes rather than passing undefined,
+    // so `[, , 1].map(...)` leaves holes in the result and join() emits
+    // empty fields — producing `[,,1]`, which is not even valid JSON, and
+    // `[,]` collapsing to `[]` with the wrong length. Array.from
+    // materialises holes as undefined so they become null here, which is
+    // what JSON.stringify does.
+    const items = Array.from(value, (entry) =>
       entry === undefined || typeof entry === 'symbol' ? 'null' : canonicalize(entry),
     )
     return `[${items.join(',')}]`

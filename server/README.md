@@ -12,7 +12,7 @@ npm install @digicredholdingsinc/did-graphql-server
 
 Public on npmjs.org — no registry auth, no `.npmrc`, no token. The tarball ships a prebuilt `dist/`, so nothing compiles at install time.
 
-Node-only. Depends on `graphql` (query parse / field-subset), `bs58` and `canonicalize` (did:key decoding, JCS canonicalization for `eddsa-jcs-2022`).
+Node-only. Depends on `graphql` (query parse / field-subset) and `bs58` (did:key decoding). JCS canonicalization for `eddsa-jcs-2022` is vendored (`src/jcs.ts`) rather than taken as a dependency — see that file for why.
 
 ## Design: who resolves what
 
