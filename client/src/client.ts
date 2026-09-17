@@ -17,8 +17,20 @@ import {
 
 export interface PreparedRequest {
   method: 'POST'
-  headers: { 'content-type': 'application/json'; 'capability-invocation': string }
+  /**
+   * Spread these into your request rather than reading individual keys.
+   * Deliberately not typed with literal header names: which headers this
+   * library sends is its own business and has changed once already, so
+   * pinning the names here would make the next change break callers at
+   * compile time for no benefit.
+   */
+  headers: Record<string, string>
   body: string
+}
+
+/** Size of the largest header this request carries — for diagnostics only. */
+function headerBytesOf(prepared: PreparedRequest): number {
+  return Math.max(0, ...Object.values(prepared.headers).map((value) => value.length))
 }
 
 /**
@@ -271,7 +283,7 @@ export class DidGraphQLClient {
           // the same cause often enough to be worth naming here.
           throw new GraphQLTransportError(
             res.status,
-            `${res.statusText} — the Capability-Invocation header (${prepared.headers['capability-invocation'].length} bytes) ` +
+            `${res.statusText} — the capability header (${headerBytesOf(prepared)} bytes) ` +
               'was rejected as too large by the server or a proxy in front of it',
           )
         }

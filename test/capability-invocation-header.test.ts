@@ -17,7 +17,12 @@ import {
 import { InvocationHeaderTooLargeError } from '../client/src/errors.js'
 import { encodeCapabilityInvocation, encodeInvocationHeader } from '../client/src/zcap.js'
 import type { Capability, SignedInvocation } from '../client/src/types.js'
-import { decodeInvocationHeader, describeInvocationHeader } from '../server/src/zcap.js'
+import {
+  ZCAP_REQUEST_HEADERS,
+  decodeInvocationHeader,
+  describeInvocationHeader,
+  zcapAllowedHeaders,
+} from '../server/src/zcap.js'
 
 const ENDPOINT = 'https://api.example.org/graphql'
 
@@ -191,4 +196,33 @@ test('prepared requests carry the new header and a JSON body', () => {
   assert.equal(prepared.headers['content-type'], 'application/json')
   assert.match(prepared.headers['capability-invocation'], /^zcap capability="/)
   assert.equal(JSON.parse(prepared.body).query, 'query A { a }')
+})
+
+test('the package finds its own headers — callers never name them', () => {
+  const capability = capabilityWith(['query A { a }'])
+  const modern = encodeCapabilityInvocation({ capability })
+  const legacy = encodeInvocationHeader({ chain: [capability] })
+
+  // Node's req.headers shape (lowercased keys, values possibly arrays)
+  assert.ok(decodeInvocationHeader({ 'capability-invocation': modern, 'content-type': 'application/json' }))
+  assert.ok(decodeInvocationHeader({ 'x-zcap-invocation': legacy }))
+  assert.ok(decodeInvocationHeader({ 'capability-invocation': [modern] as unknown as string }))
+
+  // A record that did not lowercase its keys
+  assert.ok(decodeInvocationHeader({ 'Capability-Invocation': modern }))
+
+  // A fetch Headers object
+  assert.ok(decodeInvocationHeader(new Headers({ 'capability-invocation': modern })))
+
+  // Neither header present
+  assert.equal(decodeInvocationHeader({ 'content-type': 'application/json' }), null)
+  assert.equal(describeInvocationHeader({ 'content-type': 'application/json' }).reason, 'absent')
+})
+
+test('zcapAllowedHeaders covers every header the library reads', () => {
+  const value = zcapAllowedHeaders('content-type')
+  for (const name of ZCAP_REQUEST_HEADERS) {
+    assert.ok(value.includes(name), `${name} missing from access-control-allow-headers`)
+  }
+  assert.ok(value.startsWith('content-type'))
 })

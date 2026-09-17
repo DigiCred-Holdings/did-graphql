@@ -41,14 +41,9 @@ const zcapConfig = configureZcap({
   expectedInvocationTarget: 'https://…/graphql', // derived from this request's Host header
 })
 
-// Both headers: the spec-shaped `Capability-Invocation` sent by current
-// clients, and the legacy `x-zcap-invocation` from clients before
-// @digicredholdingsinc/did-graphql-client@0.3.0. Passing both is all a
-// server needs to do to accept either.
-const payload = decodeInvocationHeader(
-  req.headers['capability-invocation'],
-  req.headers['x-zcap-invocation'],
-)
+// Hand it the headers; it finds what it needs. Works with Node's
+// req.headers, a fetch Headers, or a plain record.
+const payload = decodeInvocationHeader(req.headers)
 
 // Diagnostic: query Auth { auth { zcap { valid } } } — chain only, no invocation.
 const auth = checkAuthOnly(zcapConfig, payload)
@@ -250,7 +245,9 @@ The inflate is **bounded** (256KB output, 64KB input). These bytes are attacker-
 
 Legacy `x-zcap-invocation` is accepted permanently, so servers can be upgraded before clients — and they must be, since a client at `0.3.0`+ sends only the new header.
 
-Upgrading the package is **not sufficient** on its own. A server also has to:
+Upgrading the package is **not quite sufficient** on its own, but the two remaining steps are one-time and then permanent:
 
-1. **Read the new header.** `decodeInvocationHeader(req.headers['capability-invocation'], req.headers['x-zcap-invocation'])`. Passing only the legacy header still compiles and still decodes old clients, so this fails silently as "missing capability" rather than as a type error.
-2. **Allow it through CORS.** Add `capability-invocation` to `access-control-allow-headers`. Miss this and a browser client fails its *preflight*, which surfaces as a CORS error mentioning nothing about capabilities.
+1. **Pass the headers, not a header.** `decodeInvocationHeader(req.headers)` instead of naming a header yourself. A server that keeps reading only `x-zcap-invocation` still compiles and still decodes old clients, so it fails silently as "missing capability" rather than as a type error — the headers-object form removes that failure mode for good, including for any future header.
+2. **Let it through CORS.** `'access-control-allow-headers': zcapAllowedHeaders('content-type')`. Miss this and a browser client fails its *preflight*, surfacing as a CORS error that mentions nothing about capabilities. `ZCAP_REQUEST_HEADERS` is exported for callers assembling the value themselves.
+
+Both forms mean a later header change is picked up by upgrading the package, with no further edits.

@@ -130,7 +130,78 @@ function parseCapabilityInvocation(headerValue: string): InvocationHeaderPayload
 }
 
 /**
+ * Every request header this library reads, most-preferred first.
+ *
+ * Exported so a consuming server never has to name them. In particular
+ * it belongs in `access-control-allow-headers` — a browser client whose
+ * preflight omits `capability-invocation` fails with a CORS error that
+ * mentions nothing about capabilities, which is a long way to travel for
+ * a missing string.
+ */
+export const ZCAP_REQUEST_HEADERS = ['capability-invocation', 'x-zcap-invocation'] as const
+
+/**
+ * `access-control-allow-headers` including everything this library
+ * needs, plus whatever else the caller requires.
+ *
+ *     'access-control-allow-headers': zcapAllowedHeaders('content-type')
+ *
+ * Using this rather than a literal means a future header is picked up
+ * by upgrading the package, with no second CORS change.
+ */
+export function zcapAllowedHeaders(...additional: string[]): string {
+  return [...additional, ...ZCAP_REQUEST_HEADERS].join(', ')
+}
+
+/**
+ * Anything a server already has that holds request headers: Node's
+ * `req.headers`, a fetch `Headers`, or a plain record.
+ */
+export type HeaderSource =
+  | { get(name: string): string | null }
+  | Record<string, string | string[] | undefined>
+
+function headerValue(source: HeaderSource, name: string): string | undefined {
+  if (typeof (source as { get?: unknown }).get === 'function') {
+    return (source as { get(name: string): string | null }).get(name) ?? undefined
+  }
+  const record = source as Record<string, string | string[] | undefined>
+  // Node lowercases incoming header names; a hand-built record might not.
+  const raw =
+    record[name] ??
+    record[Object.keys(record).find((key) => key.toLowerCase() === name) ?? '\u0000']
+  return Array.isArray(raw) ? raw[0] : raw
+}
+
+function readHeaders(
+  source: HeaderSource | string | undefined,
+  legacyHeaderValue: string | undefined,
+): { modern: string | undefined; legacy: string | undefined } {
+  if (source === undefined || typeof source === 'string') {
+    return { modern: source, legacy: legacyHeaderValue }
+  }
+  return {
+    modern: headerValue(source, ZCAP_REQUEST_HEADERS[0]),
+    legacy: headerValue(source, ZCAP_REQUEST_HEADERS[1]),
+  }
+}
+
+/**
  * Decode an invocation from the request headers.
+ *
+ * Hand it whatever holds the headers — Node's `req.headers`, a fetch
+ * `Headers`, a plain record — and it finds what it needs:
+ *
+ *     const payload = decodeInvocationHeader(req.headers)
+ *
+ * Prefer that over naming headers yourself. It is the form that keeps
+ * working when this library starts reading a different header, and it
+ * removes the failure where a server upgrades, still reads only the old
+ * header, and reports "missing capability" for every current client
+ * without anything failing at build time.
+ *
+ * Passing header *values* directly still works, for callers that only
+ * have strings.
  *
  * Accepts the spec-shaped `Capability-Invocation` header, and the legacy
  * `x-zcap-invocation` (base64 of uncompressed JSON) that clients before
@@ -144,17 +215,18 @@ function parseCapabilityInvocation(headerValue: string): InvocationHeaderPayload
  * are indistinguishable in this return value.
  */
 export function decodeInvocationHeader(
-  headerValue: string | undefined,
+  source: HeaderSource | string | undefined,
   legacyHeaderValue?: string | undefined,
 ): InvocationHeaderPayload | null {
-  if (headerValue) {
-    const parsed = parseCapabilityInvocation(headerValue)
+  const { modern, legacy } = readHeaders(source, legacyHeaderValue)
+  if (modern) {
+    const parsed = parseCapabilityInvocation(modern)
     if (parsed) return parsed
-    // Fall through: a caller passing one string cannot know which
+    // Fall through: a caller passing one bare string cannot know which
     // header it came from, so try the legacy encoding on it too.
-    if (legacyHeaderValue === undefined) return decodeLegacyInvocationHeader(headerValue)
+    if (legacy === undefined) return decodeLegacyInvocationHeader(modern)
   }
-  if (legacyHeaderValue) return decodeLegacyInvocationHeader(legacyHeaderValue)
+  if (legacy) return decodeLegacyInvocationHeader(legacy)
   return null
 }
 
@@ -174,11 +246,12 @@ function decodeLegacyInvocationHeader(headerValue: string): InvocationHeaderPayl
  * direction.
  */
 export function describeInvocationHeader(
-  headerValue: string | undefined,
+  source: HeaderSource | string | undefined,
   legacyHeaderValue?: string | undefined,
 ): { payload: InvocationHeaderPayload | null; reason: 'ok' | 'absent' | 'undecodable' } {
-  if (!headerValue && !legacyHeaderValue) return { payload: null, reason: 'absent' }
-  const payload = decodeInvocationHeader(headerValue, legacyHeaderValue)
+  const { modern, legacy } = readHeaders(source, legacyHeaderValue)
+  if (!modern && !legacy) return { payload: null, reason: 'absent' }
+  const payload = decodeInvocationHeader(source, legacyHeaderValue)
   return payload ? { payload, reason: 'ok' } : { payload: null, reason: 'undecodable' }
 }
 
