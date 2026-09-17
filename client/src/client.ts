@@ -7,6 +7,7 @@ import {
   type SignedInvocation,
 } from './types.js'
 import { encodeCapabilityInvocation, isExpired } from './zcap.js'
+import { signRequest, type HttpSignatureSigner } from './httpSignature.js'
 import { validateGraphqlZcap, type GraphqlZcapValidationOptions } from './validate.js'
 import {
   CapabilityExpiredError,
@@ -153,6 +154,18 @@ export interface DidGraphQLClientOptions {
    * only for local dev against a trusted host.
    */
   allowInsecureEndpoint?: boolean
+  /**
+   * Sign invocations with RFC 9421 HTTP Message Signatures — the ZCAP
+   * spec's own proof mechanism. When set, `query()` uses it instead of
+   * `invokeCapability`, and the request carries `Content-Digest`,
+   * `Signature-Input` and `Signature` rather than an `invocation`
+   * parameter on the capability header.
+   *
+   * Prefer this. `invokeCapability` remains supported so existing
+   * signers can migrate on their own schedule, but it binds only the
+   * target URL and the query text, where this binds the whole request.
+   */
+  httpSignature?: HttpSignatureSigner
   /** Per-request timeout in ms. Defaults to 10_000. Set 0 to disable. */
   timeoutMs?: number
   /**
@@ -213,6 +226,7 @@ export class DidGraphQLClient {
   private capability: Capability
   private invokeCapability: InvokeCapabilityFn | undefined
   private fetchImpl: typeof fetch
+  private httpSignature?: HttpSignatureSigner
   private checkExpiryBeforeSend: boolean
   private timeoutMs: number
   private maxHeaderBytes: number
@@ -220,6 +234,7 @@ export class DidGraphQLClient {
   private zcapValidation: GraphqlZcapValidationOptions
 
   constructor(options: DidGraphQLClientOptions) {
+    this.httpSignature = options.httpSignature
     this.checkExpiryBeforeSend = options.checkExpiryBeforeSend ?? true
     this.zcapValidation = {
       allowInsecureEndpoint: options.allowInsecureEndpoint,
@@ -317,9 +332,35 @@ export class DidGraphQLClient {
       return this.fetchJson<GraphQLResponse<T>>(prepared, opts.signal)
     }
 
+    if (this.httpSignature) {
+      // Spec path: the capability header carries only the capability,
+      // and the proof is over the HTTP request itself.
+      const capabilityInvocation = encodeCapabilityInvocation({ capability: this.capability })
+      const body = JSON.stringify(request)
+      const signed = await signRequest({
+        signer: this.httpSignature,
+        method: 'POST',
+        endpoint: this.endpoint,
+        capabilityInvocation,
+        body,
+        capability: this.capability,
+      })
+      const prepared: PreparedRequest = {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'capability-invocation': capabilityInvocation,
+          ...signed,
+        },
+        body,
+      }
+      assertHeaderFits(capabilityInvocation, this.capability, this.maxHeaderBytes)
+      return this.fetchJson<GraphQLResponse<T>>(prepared, opts.signal)
+    }
+
     if (!this.invokeCapability) {
       throw new Error(
-        'DidGraphQLClient.query() requires invokeCapability — this package does not sign ' +
+        'DidGraphQLClient.query() requires httpSignature or invokeCapability — this package does not sign ' +
           'invocations itself; pass a function that calls whatever key store holds the ' +
           "capability controller's key. Or set unsafeMode: true for " +
           'dev/test use against a server configured to accept unsigned requests.',

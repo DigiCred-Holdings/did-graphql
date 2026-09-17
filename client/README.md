@@ -140,6 +140,26 @@ Compression is not an optimization bolted on here — it is what the binding spe
 
 Capability fields are the ZCAP-LD ones in camelCase: `id`, `controller`, `invocationTarget`, `parentCapability`, `allowedAction`, `expires`, `proof`. `caveat` is accepted and ignored.
 
+### Signing an invocation
+
+Two mechanisms. **RFC 9421 HTTP Message Signatures** is the spec's, and what you should use:
+
+```ts
+new DidGraphQLClient({
+  capability,
+  httpSignature: {
+    keyid: 'did:key:z6Mk…#z6Mk…',        // the verification method
+    sign: (base) => kms.sign(base),       // Ed25519 over the signature base
+  },
+})
+```
+
+The request then carries `Content-Digest`, `Signature-Input` and `Signature`, and the proof covers the method, the path, the capability header, the content type and — via the digest — the exact body.
+
+The older `invokeCapability` signer still works and produces an embedded `eddsa-jcs-2022` invocation in an `invocation` parameter. It binds the target URL and the query text, and nothing else about the request. Servers accept both.
+
+Either way this package holds no keys: `keyid` must be resolvable before signing, because it sits inside `@signature-params`, which is itself part of what gets signed.
+
 ### Where this deviates from the spec, and why
 
 The spec conveys the **invocation proof** with HTTP Signatures (`Signature-Input` / `Signature`), signing the HTTP request itself. This library instead sends an embedded `eddsa-jcs-2022` Data Integrity invocation in an `invocation` parameter, encoded the same way as the capability.

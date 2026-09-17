@@ -1,0 +1,102 @@
+/**
+ * Wire shape for a ZCAP-LD capability, camelCase per the W3C-CCG spec.
+ * Kept field-for-field compatible with other ZCAP-LD implementations,
+ * so a capability minted elsewhere round-trips through here without
+ * translation.
+ *
+ * NOTE: this package does not verify or evaluate `caveat` — this design
+ * authorizes by literal query document (`allowedAction`) instead of
+ * coarse verbs plus caveats, so `caveat` is accepted for
+ * shape-compatibility only and never read.
+ */
+export interface Proof {
+    type: string;
+    verificationMethod: string;
+    created?: string;
+    proofPurpose?: string;
+    [key: string]: unknown;
+}
+export interface Capability {
+    '@context'?: string;
+    id: string;
+    controller: string;
+    invocationTarget: string;
+    parentCapability?: string;
+    allowedAction: string[];
+    expires?: string;
+    caveat?: Record<string, unknown>[];
+    proof?: Proof;
+}
+/**
+ * A signed capabilityInvocation document. This package builds the
+ * unsigned document + eddsa-jcs-2022 hash (`createUnsignedCapabilityInvocation`)
+ * and assembles the wire shape after the caller signs
+ * (`finalizeCapabilityInvocation`). It never holds keys — signing stays
+ * in the injected `invokeCapability`, wherever the key actually lives.
+ */
+export interface InvocationProof {
+    type: string;
+    verificationMethod: string;
+    proofPurpose: 'capabilityInvocation';
+    capability: string;
+    capabilityAction: string;
+    invocationTarget: string;
+    created?: string;
+    [key: string]: unknown;
+}
+export interface SignedInvocation {
+    '@context'?: string | string[];
+    id: string;
+    proof: InvocationProof;
+    [key: string]: unknown;
+}
+/**
+ * What actually travels in the `x-zcap-invocation` header: the
+ * delegation chain (leaf first; just `[capability]` when there's no
+ * further sub-delegation) plus, for a real invocation, the signed
+ * proof that the chain's leaf controller is exercising it right now.
+ * `invocation` is absent for the dev-only `Auth { auth { zcap { valid } } }`
+ * diagnostic —
+ * that's a structural/expiry check on the chain alone, not a real
+ * invocation (see `DidGraphQLClient.checkAuth`).
+ */
+export interface InvocationHeaderPayload {
+    chain: Capability[];
+    invocation?: SignedInvocation;
+}
+/**
+ * Caller-supplied signing function — implemented by whatever holds the
+ * chain's leaf controller's key.
+ * Use `createUnsignedCapabilityInvocation` + `finalizeCapabilityInvocation`
+ * for the proof format; this callback only supplies the Ed25519 signature.
+ */
+export type InvokeCapabilityFn = (capability: Capability, capabilityAction: string, invocationTarget: string) => Promise<SignedInvocation>;
+export interface GraphQLRequest {
+    query: string;
+    variables?: Record<string, unknown>;
+    operationName?: string;
+}
+export interface GraphQLError {
+    message: string;
+    locations?: {
+        line: number;
+        column: number;
+    }[];
+    path?: (string | number)[];
+    extensions?: {
+        code?: string;
+        [key: string]: unknown;
+    };
+}
+export interface GraphQLResponse<T = unknown> {
+    data?: T;
+    errors?: GraphQLError[];
+}
+/**
+ * Dev diagnostic document (`DidGraphQLClient.checkAuth`). Not a
+ * production `allowedAction`. Extra `Zcap` fields (controller,
+ * invocationTarget, allowedAction, …) are optional selections on the
+ * same type. Must stay byte-identical to the server package's own
+ * AUTH_QUERY (server/src/auth.ts) — a test asserts it.
+ */
+export declare const AUTH_QUERY = "query Auth { auth { zcap { valid } } }";
