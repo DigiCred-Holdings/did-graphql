@@ -6,18 +6,50 @@ import {
   type InvokeCapabilityFn,
   type SignedInvocation,
 } from './types.js'
-import { encodeInvocationHeader, isExpired } from './zcap.js'
+import { encodeCapabilityInvocation, isExpired } from './zcap.js'
 import { validateGraphqlZcap, type GraphqlZcapValidationOptions } from './validate.js'
 import {
   CapabilityExpiredError,
   GraphQLTransportError,
+  InvocationHeaderTooLargeError,
   RequestTimeoutError,
 } from './errors.js'
 
 export interface PreparedRequest {
   method: 'POST'
-  headers: { 'content-type': 'application/json'; 'x-zcap-invocation': string }
+  /**
+   * Spread these into your request rather than reading individual keys.
+   * Deliberately not typed with literal header names: which headers this
+   * library sends is its own business and has changed once already, so
+   * pinning the names here would make the next change break callers at
+   * compile time for no benefit.
+   */
+  headers: Record<string, string>
   body: string
+}
+
+/** Size of the largest header this request carries — for diagnostics only. */
+function headerBytesOf(prepared: PreparedRequest): number {
+  return Math.max(0, ...Object.values(prepared.headers).map((value) => value.length))
+}
+
+/**
+ * Default ceiling for the built header. Deployed hosts have been measured
+ * cutting off between 8KB and 16KB, so 8KB is the conservative floor of
+ * that range rather than a spec value.
+ */
+export const DEFAULT_MAX_HEADER_BYTES = 8192
+
+function assertHeaderFits(header: string, capability: Capability, maxHeaderBytes: number): string {
+  if (maxHeaderBytes <= 0) return header
+  // Header size is counted in bytes on the wire, not UTF-16 code units.
+  // The value is base64url + ASCII punctuation, so the two agree here —
+  // measured explicitly anyway so this stays correct if that changes.
+  const bytes = typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(header).length : header.length
+  if (bytes > maxHeaderBytes) {
+    throw new InvocationHeaderTooLargeError(bytes, maxHeaderBytes, capability.allowedAction?.length ?? 0)
+  }
+  return header
 }
 
 /**
@@ -27,12 +59,20 @@ export interface PreparedRequest {
  * always, and by `query()` when `unsafeMode` is on (dev/test only —
  * see `DidGraphQLClientOptions.unsafeMode`).
  */
-export function prepareDiagnosticRequest(capability: Capability, request: GraphQLRequest): PreparedRequest {
+export function prepareDiagnosticRequest(
+  capability: Capability,
+  request: GraphQLRequest,
+  maxHeaderBytes: number = DEFAULT_MAX_HEADER_BYTES,
+): PreparedRequest {
   return {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-zcap-invocation': encodeInvocationHeader({ chain: [capability] }),
+      'capability-invocation': assertHeaderFits(
+        encodeCapabilityInvocation({ capability }),
+        capability,
+        maxHeaderBytes,
+      ),
     },
     body: JSON.stringify(request),
   }
@@ -49,12 +89,23 @@ export function prepareInvokedRequest(
   invocation: SignedInvocation,
   chain: Capability[],
   request: GraphQLRequest,
+  maxHeaderBytes: number = DEFAULT_MAX_HEADER_BYTES,
 ): PreparedRequest {
+  // `chain` stays in the signature for source compatibility, but only
+  // the leaf is sent: it was always exactly `[capability]`, and the
+  // spec's HTTP binding carries one `capability` parameter, not an
+  // array. The root is reconstructed by the verifier either way.
+  const capability = chain[0]
+  if (!capability) throw new Error('prepareInvokedRequest requires at least the leaf capability')
   return {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-zcap-invocation': encodeInvocationHeader({ invocation, chain }),
+      'capability-invocation': assertHeaderFits(
+        encodeCapabilityInvocation({ capability, invocation }),
+        capability,
+        maxHeaderBytes,
+      ),
     },
     body: JSON.stringify(request),
   }
@@ -105,6 +156,17 @@ export interface DidGraphQLClientOptions {
   /** Per-request timeout in ms. Defaults to 10_000. Set 0 to disable. */
   timeoutMs?: number
   /**
+   * Refuse to send a `Capability-Invocation` header larger than this,
+   * throwing `InvocationHeaderTooLargeError` before any HTTP. Defaults
+   * to `DEFAULT_MAX_HEADER_BYTES` (8192). Set 0 to disable.
+   *
+   * The point is the error message, not the limit: over-sized headers
+   * are rejected by proxies with statuses ranging from a correct 431 to
+   * a bare 400, and the bare 400 reads like a query problem. Failing
+   * locally names the real cause.
+   */
+  maxHeaderBytes?: number
+  /**
    * DEV/TEST ONLY — default false. Skips `invokeCapability` entirely:
    * `query()` sends the bare chain with no signed invocation, the same
    * shape `checkAuth()` already uses. Lets the whole client→server
@@ -153,6 +215,7 @@ export class DidGraphQLClient {
   private fetchImpl: typeof fetch
   private checkExpiryBeforeSend: boolean
   private timeoutMs: number
+  private maxHeaderBytes: number
   private unsafeMode: boolean
   private zcapValidation: GraphqlZcapValidationOptions
 
@@ -182,6 +245,7 @@ export class DidGraphQLClient {
     // Node/React Native, which have no `window`).
     this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis)
     this.timeoutMs = options.timeoutMs ?? 10_000
+    this.maxHeaderBytes = options.maxHeaderBytes ?? DEFAULT_MAX_HEADER_BYTES
     this.unsafeMode = options.unsafeMode ?? false
 
     if (this.unsafeMode) {
@@ -213,7 +277,18 @@ export class DidGraphQLClient {
 
     try {
       const res = await this.fetchImpl(this.endpoint, { ...prepared, signal: combined, redirect: 'error' })
-      if (!res.ok) throw new GraphQLTransportError(res.status, res.statusText)
+      if (!res.ok) {
+        if (res.status === 431) {
+          // 431 is unambiguous; a bare 400 from a proxy is not, and is
+          // the same cause often enough to be worth naming here.
+          throw new GraphQLTransportError(
+            res.status,
+            `${res.statusText} — the capability header (${headerBytesOf(prepared)} bytes) ` +
+              'was rejected as too large by the server or a proxy in front of it',
+          )
+        }
+        throw new GraphQLTransportError(res.status, res.statusText)
+      }
       return (await res.json()) as T
     } catch (err) {
       if (timeoutController?.signal.aborted && timeoutController.signal.reason instanceof RequestTimeoutError) {
@@ -238,7 +313,7 @@ export class DidGraphQLClient {
     }
 
     if (this.unsafeMode) {
-      const prepared = prepareDiagnosticRequest(this.capability, request)
+      const prepared = prepareDiagnosticRequest(this.capability, request, this.maxHeaderBytes)
       return this.fetchJson<GraphQLResponse<T>>(prepared, opts.signal)
     }
 
@@ -262,7 +337,7 @@ export class DidGraphQLClient {
       request.query,
       this.endpoint,
     )
-    const prepared = prepareInvokedRequest(invocation, [this.capability], request)
+    const prepared = prepareInvokedRequest(invocation, [this.capability], request, this.maxHeaderBytes)
     return this.fetchJson<GraphQLResponse<T>>(prepared, opts.signal)
   }
 
@@ -276,7 +351,7 @@ export class DidGraphQLClient {
    * allowedAction) via `query()` if you need the echo, not just valid.
    */
   async checkAuth(): Promise<boolean> {
-    const prepared = prepareDiagnosticRequest(this.capability, { query: AUTH_QUERY })
+    const prepared = prepareDiagnosticRequest(this.capability, { query: AUTH_QUERY }, this.maxHeaderBytes)
     const result = await this.fetchJson<GraphQLResponse<{ auth: { zcap: { valid: boolean } } }>>(prepared, undefined)
     return result.data?.auth?.zcap?.valid ?? false
   }

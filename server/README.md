@@ -1,6 +1,6 @@
 # @digicredholdingsinc/did-graphql-server
 
-Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **entirely in-process** — did:key + `eddsa-jcs-2022` Data Integrity proofs, no external agent call and no database read from inside this package. This package holds no signing keys of its own; the public key it verifies against comes straight from the presented `did:key` string. Signing the invocation is the invoking client's job, never this package's.
+Resource-server ZCAP checks for a GraphQL API. It decodes the `Capability-Invocation` header, enforces `allowedAction`, and verifies the chain and invocation **entirely in-process** — did:key + `eddsa-jcs-2022` Data Integrity proofs, no external agent call and no database read from inside this package. This package holds no signing keys of its own; the public key it verifies against comes straight from the presented `did:key` string. Signing the invocation is the invoking client's job, never this package's.
 
 See the [repo README](../README.md) for how the pieces fit. This page is the server API, attenuation rules, and the optimizations that are already in place.
 
@@ -41,7 +41,9 @@ const zcapConfig = configureZcap({
   expectedInvocationTarget: 'https://…/graphql', // derived from this request's Host header
 })
 
-const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'])
+// Hand it the headers; it finds what it needs. Works with Node's
+// req.headers, a fetch Headers, or a plain record.
+const payload = decodeInvocationHeader(req.headers)
 
 // Diagnostic: query Auth { auth { zcap { valid } } } — chain only, no invocation.
 const auth = checkAuthOnly(zcapConfig, payload)
@@ -231,4 +233,21 @@ Accepts a structurally valid, unexpired leaf with a matching `allowedAction`, **
 | `QUERY_NOT_ALLOWED` | Document is not an exact/`subset` match of `allowedAction` |
 | `INVOCATION_INVALID` | Missing invocation, wrong signer, or the invocation proof failed verification |
 
-`decodeInvocationHeader` returns `null` on missing/invalid base64 JSON rather than throwing.
+`decodeInvocationHeader` returns `null` rather than throwing, for a missing header, bad base64url, a non-gzip payload, malformed JSON, or an inflate over the size cap.
+
+`describeInvocationHeader` returns the same payload plus a `reason` of `'ok' | 'absent' | 'undecodable'`. Worth using in logs: a header truncated by a proxy and a client that sent none are very different operational problems, and reporting both as "missing capability" is what previously sent debugging in the wrong direction on a header-size failure.
+
+### Header encoding
+
+The `Capability-Invocation` header follows the [ZCAP spec's HTTP binding](https://w3c-ccg.github.io/zcap-spec/v0.4.0-rc.5/): `zcap capability="<base64url(gzip(json))>"`, with the invocation carried in a second parameter encoded the same way (that part is this library's own — see the client README on where and why this deviates).
+
+The inflate is **bounded** (256KB output, 64KB input). These bytes are attacker-controlled and gzip expands cheaply, so an unbounded inflate here would be a memory-exhaustion vector.
+
+Legacy `x-zcap-invocation` is accepted permanently, so servers can be upgraded before clients — and they must be, since a client at `0.3.0`+ sends only the new header.
+
+Upgrading the package is **not quite sufficient** on its own, but the two remaining steps are one-time and then permanent:
+
+1. **Pass the headers, not a header.** `decodeInvocationHeader(req.headers)` instead of naming a header yourself. A server that keeps reading only `x-zcap-invocation` still compiles and still decodes old clients, so it fails silently as "missing capability" rather than as a type error — the headers-object form removes that failure mode for good, including for any future header.
+2. **Let it through CORS.** `'access-control-allow-headers': zcapAllowedHeaders('content-type')`. Miss this and a browser client fails its *preflight*, surfacing as a CORS error that mentions nothing about capabilities. `ZCAP_REQUEST_HEADERS` is exported for callers assembling the value themselves.
+
+Both forms mean a later header change is picked up by upgrading the package, with no further edits.

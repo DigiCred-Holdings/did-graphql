@@ -169,7 +169,10 @@ async function main() {
     }
     const query: string = body.query
 
-    const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'] as string | undefined)
+    // Hand it the headers and let it find what it needs — which header
+    // carries the invocation is the library's business, not this
+    // server's, and it has changed once already.
+    const payload = decodeInvocationHeader(req.headers)
 
     // Real, local, additional check — did-graphql-server's own
     // allowedAction/expiry gate below still runs regardless; this is
