@@ -6,7 +6,7 @@ import { after, before, test } from 'node:test'
 import type { Agent } from '@credo-ts/core'
 
 import { DidGraphQLClient } from '../client/src/client.js'
-import { decodeInvocationHeader } from '../client/src/zcap.js'
+import { decodeInvocationHeader as decodeServerHeader } from '../server/src/zcap.js'
 import { InvalidCapabilityError } from '../client/src/errors.js'
 import { validateGraphqlZcap } from '../client/src/validate.js'
 import { createDidKey, createTestAgent, type DidKeyPair } from './helpers/credoAgent.js'
@@ -59,7 +59,7 @@ test('DidGraphQLClient.checkAuth sends an unsigned query Auth { auth { zcap { va
     expectedInvocationTarget: GRAPHQL_ENDPOINT,
     fetchImpl: (async (_url, init) => {
       capturedHeader = (init as RequestInit).headers
-        ? ((init as RequestInit).headers as Record<string, string>)['x-zcap-invocation']
+        ? ((init as RequestInit).headers as Record<string, string>)['capability-invocation']
         : undefined
       capturedBody = typeof (init as RequestInit).body === 'string' ? ((init as RequestInit).body as string) : undefined
       return new Response(JSON.stringify({ data: { auth: { zcap: { valid: true } } } }), {
@@ -71,7 +71,13 @@ test('DidGraphQLClient.checkAuth sends an unsigned query Auth { auth { zcap { va
 
   assert.equal(await client.checkAuth(), true)
   assert.ok(capturedHeader)
-  const payload = decodeInvocationHeader(capturedHeader)
+  // The spec-shaped header, decoded by the SERVER's parser — the point
+  // of asserting here rather than round-tripping through the client is
+  // that the client's fflate gzip and the server's zlib gunzip are
+  // different implementations that have to agree.
+  assert.match(capturedHeader, /^zcap capability="/)
+  const payload = decodeServerHeader(capturedHeader)
+  assert.ok(payload)
   assert.equal(payload.chain[0]?.id, capability.id)
   assert.equal(payload.invocation, undefined)
   assert.equal(JSON.parse(capturedBody ?? '{}').query, AUTH_QUERY)

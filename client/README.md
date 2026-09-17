@@ -129,20 +129,30 @@ validateGraphqlZcap(artifacts.zcap.graphql, {
 
 ```
 content-type: application/json
-x-zcap-invocation: <base64 JSON>
+capability-invocation: zcap capability="<base64url(gzip(json))>", invocation="<base64url(gzip(json))>"
 ```
 
 Body: `{ query, variables?, operationName? }`.
 
-Header payload:
+This follows the [ZCAP spec's HTTP binding](https://w3c-ccg.github.io/zcap-spec/v0.4.0-rc.5/) for the capability, which specifies serializing it to JSON, gzipping, and base64url-encoding the result. The unsigned root is never sent; the verifier reconstructs it. `invocation` is omitted for `checkAuth()` and for `unsafeMode` queries.
 
-```ts
-{ chain: [leafCapability], invocation?: SignedInvocation }
-```
-
-`chain` is leaf-first. The unsigned root is never sent; the server reconstructs it. `invocation` is omitted for `checkAuth()` and for `unsafeMode` queries.
+Compression is not an optimization bolted on here — it is what the binding specifies, and it is what keeps the header under host limits. A real 9-query capability is ~5.9KB of JSON and ~1.8KB encoded this way, against an 8KB ceiling on hosts that have been measured.
 
 Capability fields are the ZCAP-LD ones in camelCase: `id`, `controller`, `invocationTarget`, `parentCapability`, `allowedAction`, `expires`, `proof`. `caveat` is accepted and ignored.
+
+### Where this deviates from the spec, and why
+
+The spec conveys the **invocation proof** with HTTP Signatures (`Signature-Input` / `Signature`), signing the HTTP request itself. This library instead sends an embedded `eddsa-jcs-2022` Data Integrity invocation in an `invocation` parameter, encoded the same way as the capability.
+
+That is deliberate, not an oversight: the proof is byte-compatible with the signer on the issuing side, pinned by a cross-implementation hash fixture. Switching to HTTP Signatures would invalidate that and require changes well outside this library.
+
+The practical cost is worth knowing. HTTP Signatures cover a `date` component, so verifiers bound replay to a clock-skew window. An embedded invocation binds to the `invocationTarget` and to the exact query text — a captured header cannot be redirected or reused for a different query — but the only time bound is the *capability's* `expires`.
+
+### Migrating from `x-zcap-invocation`
+
+Clients before `0.3.0` sent `x-zcap-invocation: <base64 of uncompressed JSON>`, wrapping the leaf in a `chain` array with no counterpart in the ZCAP data model. Servers still accept it, permanently, so **upgrade servers before clients**: a new client against an old server fails on every request, while an old client against a new server is fine.
+
+`encodeInvocationHeader` / `decodeInvocationHeader` remain exported and deprecated for callers with their own transport.
 
 ## Optimizations already in place
 

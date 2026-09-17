@@ -13,6 +13,8 @@
 // against. Must default to false; see the warning `configureZcap`
 // emits when it's on.
 
+import { gunzipSync } from 'node:zlib'
+
 import { GraphQLError, parse } from 'graphql'
 import type { DocumentNode, OperationDefinitionNode, SelectionSetNode } from 'graphql'
 import type { Capability, SignedInvocation } from './localVerify.js'
@@ -66,13 +68,118 @@ export function configureZcap(config: ZcapServerConfig): ZcapServerConfig {
   return config
 }
 
-export function decodeInvocationHeader(headerValue: string | undefined): InvocationHeaderPayload | null {
-  if (!headerValue) return null
+/**
+ * Ceiling on an inflated `capability` / `invocation` parameter.
+ *
+ * These bytes are attacker-controlled and gzip is happy to expand a few
+ * hundred bytes into gigabytes, so the inflate is bounded rather than
+ * trusted. A real 9-query capability is ~6KB of JSON; 256KB leaves two
+ * orders of magnitude of room and still refuses a bomb.
+ */
+const MAX_INFLATED_BYTES = 256 * 1024
+
+/** Bound the compressed side too, so a bomb is refused before any work. */
+const MAX_PARAM_CHARS = 64 * 1024
+
+function gunzipJson(base64url: string): unknown {
+  if (base64url.length > MAX_PARAM_CHARS) return undefined
+  const json = gunzipSync(Buffer.from(base64url, 'base64url'), { maxOutputLength: MAX_INFLATED_BYTES })
+  return JSON.parse(json.toString('utf8'))
+}
+
+/**
+ * Parse a `Capability-Invocation` header value.
+ *
+ * Shape follows the ZCAP spec's HTTP binding: `zcap capability="..."`,
+ * where the parameter is base64url of gzipped JSON. The invocation
+ * proof travels in an `invocation` parameter encoded the same way —
+ * that part is this library's own, since the spec conveys it with HTTP
+ * Signatures instead (see the README).
+ */
+function parseCapabilityInvocation(headerValue: string): InvocationHeaderPayload | null {
+  const params = new Map<string, string>()
+  // Deliberately not a full RFC-8941 parser: the accepted grammar is
+  // exactly what this library emits, so anything else fails closed.
+  for (const match of headerValue.matchAll(/([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*"([^"]*)"/g)) {
+    params.set(match[1]!, match[2]!)
+  }
+
+  const capabilityParam = params.get('capability')
+  if (!capabilityParam) return null
+
   try {
-    return JSON.parse(Buffer.from(headerValue, 'base64').toString('utf8'))
+    const capability = gunzipJson(capabilityParam)
+    if (!capability || typeof capability !== 'object') return null
+
+    const invocationParam = params.get('invocation')
+    const invocation = invocationParam ? gunzipJson(invocationParam) : undefined
+    if (invocationParam && (!invocation || typeof invocation !== 'object')) return null
+
+    // Re-shaped into the internal payload. `chain` is this module's own
+    // representation, not a wire concept — the spec sends one delegated
+    // capability and the verifier reconstructs the root.
+    return {
+      chain: [capability as Capability],
+      ...(invocation ? { invocation: invocation as SignedInvocation } : {}),
+    }
+  } catch {
+    // Covers bad base64url, a non-gzip payload, an inflate over
+    // maxOutputLength, and malformed JSON.
+    return null
+  }
+}
+
+/**
+ * Decode an invocation from the request headers.
+ *
+ * Accepts the spec-shaped `Capability-Invocation` header, and the legacy
+ * `x-zcap-invocation` (base64 of uncompressed JSON) that clients before
+ * client@0.3.0 sent. The legacy path is permanent — it costs one lookup
+ * — so old clients keep working indefinitely.
+ *
+ * Returns `null` when nothing usable is present. Use
+ * `describeInvocationHeader` when the caller needs to tell "absent" from
+ * "present but unusable": a header truncated by a proxy is a very
+ * different operational problem from a client that sent none, and they
+ * are indistinguishable in this return value.
+ */
+export function decodeInvocationHeader(
+  headerValue: string | undefined,
+  legacyHeaderValue?: string | undefined,
+): InvocationHeaderPayload | null {
+  if (headerValue) {
+    const parsed = parseCapabilityInvocation(headerValue)
+    if (parsed) return parsed
+    // Fall through: a caller passing one string cannot know which
+    // header it came from, so try the legacy encoding on it too.
+    if (legacyHeaderValue === undefined) return decodeLegacyInvocationHeader(headerValue)
+  }
+  if (legacyHeaderValue) return decodeLegacyInvocationHeader(legacyHeaderValue)
+  return null
+}
+
+function decodeLegacyInvocationHeader(headerValue: string): InvocationHeaderPayload | null {
+  try {
+    const payload = JSON.parse(Buffer.from(headerValue, 'base64').toString('utf8'))
+    return payload && typeof payload === 'object' && Array.isArray(payload.chain) ? payload : null
   } catch {
     return null
   }
+}
+
+/**
+ * Why there was no usable invocation — so a server can log a truncated
+ * header as such instead of reporting "missing capability", which is
+ * what it looked like before and what sent debugging in the wrong
+ * direction.
+ */
+export function describeInvocationHeader(
+  headerValue: string | undefined,
+  legacyHeaderValue?: string | undefined,
+): { payload: InvocationHeaderPayload | null; reason: 'ok' | 'absent' | 'undecodable' } {
+  if (!headerValue && !legacyHeaderValue) return { payload: null, reason: 'absent' }
+  const payload = decodeInvocationHeader(headerValue, legacyHeaderValue)
+  return payload ? { payload, reason: 'ok' } : { payload: null, reason: 'undecodable' }
 }
 
 function normalizeQuery(text: string | undefined): string {

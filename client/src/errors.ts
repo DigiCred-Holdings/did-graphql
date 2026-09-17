@@ -43,3 +43,31 @@ export class GraphQLTransportError extends Error {
     this.name = 'GraphQLTransportError'
   }
 }
+
+/**
+ * Thrown before any HTTP, when the built `Capability-Invocation` header
+ * exceeds `maxHeaderBytes`.
+ *
+ * This exists because the failure it pre-empts is so badly signalled.
+ * Hosts cut off between 8KB and 16KB, and not all of them say so: one
+ * proxy in use returns a bare `400`, which surfaces as a generic
+ * transport error and reads like a malformed query. The cause is almost
+ * always `allowedAction` — it is the overwhelming majority of a
+ * capability's bytes — so the count is reported alongside the size.
+ */
+export class InvocationHeaderTooLargeError extends Error {
+  constructor(
+    public readonly headerBytes: number,
+    public readonly maxHeaderBytes: number,
+    public readonly allowedActionCount: number,
+  ) {
+    super(
+      `Capability-Invocation header is ${headerBytes} bytes, over the ${maxHeaderBytes}-byte limit ` +
+        `for this client. The capability grants ${allowedActionCount} allowedAction ` +
+        `${allowedActionCount === 1 ? 'entry' : 'entries'}, which dominate its size. ` +
+        'Delegate fewer queries, or register wider documents and rely on field-subset matching. ' +
+        'Raise maxHeaderBytes only if the server and every proxy in front of it accept larger headers.',
+    )
+    this.name = 'InvocationHeaderTooLargeError'
+  }
+}

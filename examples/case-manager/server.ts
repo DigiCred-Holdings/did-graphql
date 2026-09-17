@@ -169,7 +169,14 @@ async function main() {
     }
     const query: string = body.query
 
-    const payload = decodeInvocationHeader(req.headers['x-zcap-invocation'] as string | undefined)
+    // Both headers: the spec-shaped `Capability-Invocation` that current
+    // clients send, and the legacy `x-zcap-invocation` from clients
+    // before @digicredholdingsinc/did-graphql-client@0.3.0. Passing both
+    // is all a server has to do to accept either.
+    const payload = decodeInvocationHeader(
+      req.headers['capability-invocation'] as string | undefined,
+      req.headers['x-zcap-invocation'] as string | undefined,
+    )
 
     // Real, local, additional check — did-graphql-server's own
     // allowedAction/expiry gate below still runs regardless; this is
