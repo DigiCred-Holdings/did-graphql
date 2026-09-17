@@ -47,8 +47,8 @@ You cannot get a stronger guarantee than "this peer's GraphQL API said so" — t
 1. Someone publishes a GraphQL endpoint. Its controller DID is the root of authority for that resource.
 2. That party delegates an attenuated capability to a client's DID — naming the `invocationTarget`, the `controller`, and the `allowedAction` documents — over whatever channel they already share.
 3. The client stores the capability. It can now invoke it without the delegator's involvement.
-4. Before any HTTP, `@digicred-holdings/did-graphql-client` runs the [GraphQL ZCAP validation algorithm](client/README.md#graphql-zcap-validation-algorithm) (`validateGraphqlZcap`): `invocationTarget` MUST be a GraphQL endpoint, HTTPS, not a private IP; `allowedAction` MUST be GraphQL documents; `expires` MUST be valid. This is structural validation, not proof verification. Then it asks the caller-supplied signer for an invocation and POSTs with `x-zcap-invocation` (`redirect: error`).
-5. The resource server (`@digicred-holdings/did-graphql-server`) checks `allowedAction` membership and verifies the chain and invocation — `did:key` + `eddsa-jcs-2022`, entirely in-process. No signing keys live in either package.
+4. Before any HTTP, `@digicredholdingsinc/did-graphql-client` runs the [GraphQL ZCAP validation algorithm](client/README.md#graphql-zcap-validation-algorithm) (`validateGraphqlZcap`): `invocationTarget` MUST be a GraphQL endpoint, HTTPS, not a private IP; `allowedAction` MUST be GraphQL documents; `expires` MUST be valid. This is structural validation, not proof verification. Then it asks the caller-supplied signer for an invocation and POSTs with `x-zcap-invocation` (`redirect: error`).
+5. The resource server (`@digicredholdingsinc/did-graphql-server`) checks `allowedAction` membership and verifies the chain and invocation — `did:key` + `eddsa-jcs-2022`, entirely in-process. No signing keys live in either package.
 
 Signing is always the caller's: the client package never holds a key, and gets invocations from an injected `invokeCapability` function backed by whatever key store the app already uses.
 
@@ -56,8 +56,8 @@ Signing is always the caller's: the client package never holds a key, and gets i
 
 | Path | What |
 |------|------|
-| [`client/`](client/) | `@digicred-holdings/did-graphql-client` — invokes a held capability and POSTs the request. Never signs it itself. |
-| [`server/`](server/) | `@digicred-holdings/did-graphql-server` — resource-server invocation checking, plus optional GraphQL modules. Verifies in-process; holds no keys. |
+| [`client/`](client/) | `@digicredholdingsinc/did-graphql-client` — invokes a held capability and POSTs the request. Never signs it itself. |
+| [`server/`](server/) | `@digicredholdingsinc/did-graphql-server` — resource-server invocation checking, plus optional GraphQL modules. Verifies in-process; holds no keys. |
 
 Technical reference for each package (API, options, optimizations, caching):
 
@@ -71,6 +71,39 @@ Both have a matching `unsafeMode` (client) / `UNSAFE_MODE` (server) — default 
 Queries and mutations share one code path. A GraphQL POST doesn't care whether the document says `query` or `mutation`, and `allowedAction` matches the literal document text either way.
 
 Subscriptions are **not implemented**. They need a persistent transport (WebSocket/SSE) rather than a request/response POST — build that when something actually needs it.
+
+## Releasing
+
+Both packages are public on npmjs.org under the **`@digicredholdingsinc`** scope. Consumers need no registry auth at all — no `.npmrc`, no token, no `NPM_TOKEN` plumbed through a Dockerfile. That is the whole reason for being here rather than on GitHub Packages, which has no anonymous-read path.
+
+Releases are cut by [Changesets](https://github.com/changesets/changesets). Add a changeset with the change that needs one:
+
+```bash
+npm run changeset
+```
+
+Merging that to `main` makes `changesets/action` open a **Version Packages** PR (bumps versions, writes `CHANGELOG.md`). Merging *that* PR publishes.
+
+### Publishing auth: trusted publishing, no token
+
+`release.yml` holds no registry credential. It mints a short-lived OIDC token from its GitHub Actions identity, which npm checks against a **trusted publisher** configured per package on npmjs.com (org, repo, workflow filename). Provenance attestations are generated automatically on that path, which is why this repo has to stay public — npm refuses provenance for a private source repo.
+
+Three things have to stay true for that to keep working, and each has bitten a project somewhere:
+
+- `permissions: id-token: write` on the job. Without it there is no OIDC token, npm falls back to looking for a registry token, finds none, and fails `ENEEDAUTH`.
+- Node >= 22.14.0 **and** npm >= 11.5.1. Node 24 has shipped npm 11.x builds below that floor, so the workflow installs `npm@latest` explicitly rather than trusting the runner image.
+- The trusted publisher on npmjs.com names `.github/workflows/release.yml`. Renaming or moving this file breaks publishing until the publisher config is updated to match.
+
+### Adding a new package to this repo
+
+npm cannot create a package from OIDC — a trusted publisher can only be configured for a package that already exists, and npm has [no pending-publisher mechanism](https://github.com/npm/cli/issues/8544) to pre-register one. So a brand-new package needs a **one-time manual first publish** from a machine logged into the org:
+
+```bash
+npm run build
+cd <new-package> && npm publish --access public
+```
+
+Then configure its trusted publisher on npmjs.com, after which every subsequent release goes through CI with no token. This is a bootstrap step only — it is not how ordinary releases work.
 
 ## Tests
 

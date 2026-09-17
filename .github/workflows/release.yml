@@ -9,7 +9,10 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 permissions:
   contents: write
   pull-requests: write
-  packages: write
+  # Lets the job mint an OIDC token for npm trusted publishing. Without
+  # this the publish falls back to looking for a registry token, finds
+  # none, and fails with ENEEDAUTH.
+  id-token: write
 
 jobs:
   release:
@@ -21,18 +24,29 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.19.2'
+          # Trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1.
+          node-version: '24'
           cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@digicred-holdings'
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@digicredholdingsinc'
+
+      # Node 24 has shipped several npm 11.x versions, not all of them
+      # >= 11.5.1. Pin the floor explicitly rather than inheriting
+      # whatever the runner's Node image happens to bundle this month.
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@latest
 
       - run: npm ci
 
-      - name: Create Release PR or publish to GitHub Packages
+      - name: Create Release PR or publish to npm
         uses: changesets/action@v1
         with:
           # runs `npm run build` (client + server) then `changeset publish`
           publish: npm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No NODE_AUTH_TOKEN: publishing authenticates via OIDC against
+          # the trusted publisher configured for each package on npmjs.com
+          # (org `digicredholdingsinc`, this repo, this workflow file).
+          # Provenance attestations are generated automatically on that
+          # path — the repo is public, which npm requires for them.

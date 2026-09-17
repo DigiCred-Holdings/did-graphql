@@ -3,7 +3,7 @@ import canonicalize from 'canonicalize'
 
 /**
  * Spec (eddsa-jcs-2022): sha256(JCS(proofOptions)) || sha256(JCS(document)).
- * Must match `@digicred-holdings/did-graphql-server`'s own
+ * Must match `@digicredholdingsinc/did-graphql-server`'s own
  * `hashEddsaJcs2022`, and any other implementation of the suite,
  * byte-for-byte.
  */

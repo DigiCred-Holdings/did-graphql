@@ -1,5 +1,5 @@
 {
-  "name": "@digicred-holdings/did-graphql-client",
+  "name": "@digicredholdingsinc/did-graphql-client",
   "version": "0.2.0",
   "description": "GraphQL client that authorizes requests via ZCAP (W3C Authorization Capabilities) invocation headers.",
   "license": "Apache-2.0",
@@ -16,7 +16,8 @@
     "url": "https://github.com/DigiCred-Holdings/did-graphql/issues"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "dist",

@@ -1,5 +1,5 @@
 {
-  "name": "@digicred-holdings/did-graphql-server",
+  "name": "@digicredholdingsinc/did-graphql-server",
   "version": "0.5.1",
   "description": "Server-side ZCAP-LD invocation checking for a GraphQL resource server — verifies did:key + eddsa-jcs-2022 entirely in-process (no agent, no database). Includes an explicit UNSAFE_MODE for dev/test without real capabilities.",
   "license": "Apache-2.0",
@@ -16,7 +16,8 @@
     "url": "https://github.com/DigiCred-Holdings/did-graphql/issues"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "dist",

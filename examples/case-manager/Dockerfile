@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 
 # Only the repo root's own package.json/node_modules matter — the
 # example never imports client/server through their own published
-# packages (@digicred/did-graphql-client / -server), only through
+# packages (@digicredholdingsinc/did-graphql-client / -server), only through
 # relative paths straight to their .ts source, which tsx resolves
 # directly. client/ and server/'s own package.json/node_modules (for
 # building THEIR OWN dist/) are irrelevant to running this and
