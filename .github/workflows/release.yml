@@ -18,11 +18,11 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1.
           node-version: '24'
@@ -39,14 +39,23 @@ jobs:
       - run: npm ci
 
       - name: Create Release PR or publish to npm
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           # runs `npm run build` (client + server) then `changeset publish`
           publish: npm run release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # No NODE_AUTH_TOKEN: publishing authenticates via OIDC against
-          # the trusted publisher configured for each package on npmjs.com
-          # (org `digicredholdingsinc`, this repo, this workflow file).
-          # Provenance attestations are generated automatically on that
-          # path — the repo is public, which npm requires for them.
+          # v2 breaking change: the token must come through this input.
+          # A `GITHUB_TOKEN` env var, credentials left behind by
+          # actions/checkout, and tokens embedded in remote URLs are all
+          # explicitly no longer substitutes. This still resolves to the
+          # default token today, so the behaviour is unchanged — but when
+          # this is swapped for a GitHub App installation token (to get
+          # Version Packages PRs created automatically again, which org
+          # policy currently forbids GITHUB_TOKEN from doing), it has to
+          # be set here. Passing it as env would fail silently.
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        # No NODE_AUTH_TOKEN and no `env:` block at all: publishing
+        # authenticates via OIDC against the trusted publisher configured
+        # for each package on npmjs.com (org `digicredholdingsinc`, this
+        # repo, this workflow file). Provenance attestations are generated
+        # automatically on that path — the repo is public, which npm
+        # requires for them.
