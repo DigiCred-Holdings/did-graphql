@@ -196,7 +196,20 @@ The capability data model, the `Capability-Invocation` header encoding, root der
 
 **Invocation via HTTP trailers is not supported.** §Example 10 shows the same headers sent as trailers under chunked encoding. `decodeInvocationHeader` reads request headers, not trailers.
 
-**The invocation proof is not HTTP Signatures.** The spec signs the HTTP request itself via `Signature-Input`/`Signature`. This library sends an embedded `eddsa-jcs-2022` Data Integrity invocation instead, because that proof is byte-compatible with the signer on the issuing side and pinned by a cross-implementation fixture. Changing it would mean changing that signer, the wallet and the agent together. The practical difference is replay scope, which [Invocation freshness](#invocation-freshness) now bounds.
+**Two invocation proof mechanisms, and the spec's is preferred.** RFC 9421 HTTP Message Signatures — `Content-Digest`, `Signature-Input`, `Signature`, over exactly the components §Example 9 lists — is supported. The older embedded `eddsa-jcs-2022` Data Integrity invocation, carried in a non-spec `invocation` parameter, is still accepted so existing signers can migrate on their own schedule.
+
+They are not equivalent:
+
+| | HTTP Signatures | embedded invocation |
+|---|---|---|
+| binds method and path | yes | no |
+| binds the request body | yes, via `Content-Digest` | the query text only |
+| binds the capability header | yes | no |
+| freshness | `created`, windowed | `created`, windowed |
+
+A request carrying `Signature-Input` is verified that way and the embedded path is **not** consulted, so a sender cannot present a weak proof alongside a strong one and have the weak one accepted.
+
+Verifying a signature needs the request itself — method, path, headers, body — none of which is reconstructible from the capability header, so `checkInvocation` takes an optional fourth argument carrying them. Omit it and only the embedded path is available.
 
 **No `action` property.** This is *not* a divergence. §4.3 makes `action` optional — a target "MAY support the `action` property ... as one common behavioral direction technique" — and states that "targets are free to choose their own mechanisms for directing behavior". Authorizing by literal GraphQL document is such a mechanism.
 
