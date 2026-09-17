@@ -139,7 +139,7 @@ Only `did:key` root controllers are supported — any other DID method fails clo
 Entries are **real GraphQL documents**, not coarse verbs. Two matches:
 
 1. **Exact** — whitespace-normalized string equality. Cheap; this is the common case when a client sends a registered query verbatim.
-2. **Field subset** — the request's root fields, and every nested field under them, are a subset of some registered entry. Trimming, reordering, or dropping fields of an already-allowed query works with no extra catalog entry. `__typename` is ignored (GraphQL metadata). Named fragment spreads are **not** supported and fail closed.
+2. **Field subset** — the operation type matches, **and** the request's root fields, and every nested field under them, are a subset of some registered entry. The operation-type check matters: a schema may expose the same name on `Query` and `Mutation`, so matching on fields alone would let a capability granting `query Thing { thing { a } }` authorize `mutation Thing { thing { a } }`. An anonymous `{ ... }` is a query, per GraphQL's own default. Trimming, reordering, or dropping fields of an already-allowed query works with no extra catalog entry. `__typename` is ignored (GraphQL metadata). Named fragment spreads are **not** supported and fail closed.
 
 Argument **values** (`limit`, `filter`, …) are **not** constrained. A client allowed to query a field may pass any variables to it. Value-level caveats are a separate, unbuilt axis.
 
