@@ -21,7 +21,7 @@
     "@credo-ts/node": "0.6.3",
     "@openwallet-foundation/askar-nodejs": "^0.4.3",
     "@openwallet-foundation/askar-shared": "^0.4.3",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.5.1",
     "@types/pg": "^8.23.0",
     "bs58": "^6.0.0",
     "canonicalize": "^2.0.0",
