@@ -324,7 +324,13 @@ function collectFieldNames(selectionSet: SelectionSetNode | undefined, out: Set<
  * doesn't support — never partial results, so a caller can't
  * accidentally authorize against an incomplete picture.
  */
-function fieldsByRootField(query: string): Map<string, Set<string>> | null {
+interface ParsedOperation {
+  /** `query` | `mutation` | `subscription` — GraphQL defaults an anonymous `{ ... }` to `query`. */
+  operation: string
+  fields: Map<string, Set<string>>
+}
+
+function fieldsByRootField(query: string): ParsedOperation | null {
   let doc: DocumentNode
   try {
     doc = parse(query)
@@ -344,7 +350,7 @@ function fieldsByRootField(query: string): Map<string, Set<string>> | null {
     const existing = map.get(selection.name.value)
     map.set(selection.name.value, existing ? new Set([...existing, ...fields]) : fields)
   }
-  return map
+  return { operation: op.operation, fields: map }
 }
 
 /**
@@ -357,11 +363,21 @@ function fieldsByRootField(query: string): Map<string, Set<string>> | null {
  * that happen not to parse as a full query on their own only in
  * degenerate/malformed cases, which should fail closed either way.
  */
-function isFieldSubsetOfEntry(queryFields: Map<string, Set<string>>, entry: string): boolean {
-  const entryFields = fieldsByRootField(entry)
-  if (!entryFields) return false
-  for (const [rootField, fields] of queryFields) {
-    const allowed = entryFields.get(rootField)
+function isFieldSubsetOfEntry(parsedQuery: ParsedOperation, entry: string): boolean {
+  const parsedEntry = fieldsByRootField(entry)
+  if (!parsedEntry) return false
+
+  // Operation type first. Field names alone are NOT sufficient: a
+  // schema may expose the same name on Query and Mutation, so matching
+  // on fields only would let a capability granting
+  // `query Thing { thing { a } }` authorize
+  // `mutation Thing { thing { a } }` — a read grant permitting a write.
+  // The exact-match path never had this problem, since the operation
+  // keyword is part of the document text it compares.
+  if (parsedQuery.operation !== parsedEntry.operation) return false
+
+  for (const [rootField, fields] of parsedQuery.fields) {
+    const allowed = parsedEntry.fields.get(rootField)
     if (!allowed) return false
     for (const field of fields) {
       if (!allowed.has(field)) return false
@@ -381,9 +397,9 @@ function matchesAllowedAction(allowedAction: string[] | undefined, rawQueryText:
   const normalized = normalizeQuery(rawQueryText)
   if ((allowedAction ?? []).some((entry) => normalizeQuery(entry) === normalized)) return true
 
-  const queryFields = fieldsByRootField(rawQueryText)
-  if (!queryFields) return false
-  return (allowedAction ?? []).some((entry) => isFieldSubsetOfEntry(queryFields, entry))
+  const parsedQuery = fieldsByRootField(rawQueryText)
+  if (!parsedQuery) return false
+  return (allowedAction ?? []).some((entry) => isFieldSubsetOfEntry(parsedQuery, entry))
 }
 
 // --- unsafeMode structural fallback ---
