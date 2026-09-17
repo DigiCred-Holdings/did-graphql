@@ -1,4 +1,4 @@
-# @digicred-holdings/did-graphql-client
+# @digicredholdingsinc/did-graphql-client
 
 GraphQL client for the invoking side. It attaches a ZCAP invocation to every request as `x-zcap-invocation` and POSTs JSON to a GraphQL endpoint. It never holds keys and never signs — `invokeCapability` is injected by the caller, backed by whatever key store already holds the capability controller's key.
 
@@ -9,18 +9,22 @@ This page is the client API, the **GraphQL ZCAP validation algorithm** the clien
 ## Install
 
 ```bash
-npm install @digicred-holdings/did-graphql-client
+npm install @digicredholdingsinc/did-graphql-client
 ```
 
-Until the package is published, consumers use either a `file:…/client` path dependency (build first, same as below), or a git dependency pinned to this repo's `client` workspace — e.g. Yarn:
+Public on npmjs.org — no registry auth, no `.npmrc`, no token. The tarball ships a prebuilt `dist/`, so nothing compiles at install time.
 
-```
-"@digicred-holdings/did-graphql-client": "git+https://github.com/DigiCred-Holdings/did-graphql.git#commit=<sha>&workspace=%40digicred%2Fdid-graphql-client"
-```
+Two legacy paths still work and are kept for consumers that haven't moved onto the registry yet:
 
-That path relies on `client/package.json`'s `postinstall` script (`npm run build`) and on `files` listing `src`/`tsconfig.json` alongside `dist` — a git dependency fetch is packed using `files` *before* any script runs, so without the source in that list there'd be nothing for `postinstall` to build from.
+- A git dependency pinned to this repo's `client` workspace (Yarn only — npm cannot install a single workspace out of a git monorepo):
 
-For a local `file:` dependency, build before importing instead:
+  ```
+  "@digicredholdingsinc/did-graphql-client": "git+https://github.com/DigiCred-Holdings/did-graphql.git#commit=<sha>&workspace=%40digicredholdingsinc%2Fdid-graphql-client"
+  ```
+
+  That path relies on `client/package.json`'s `postinstall` script and on `files` listing `src`/`tsconfig.json` alongside `dist` — a git dependency fetch is packed using `files` *before* any script runs, so without the source in that list there'd be nothing for `postinstall` to build from. On a registry install the same script sees `dist/` already there and exits immediately.
+
+- A local `file:…/client` path dependency, which needs a build first:
 
 ```bash
 cd client && npm install && npm run build
@@ -29,7 +33,7 @@ cd client && npm install && npm run build
 ## Usage
 
 ```ts
-import { DidGraphQLClient } from '@digicred-holdings/did-graphql-client'
+import { DidGraphQLClient } from '@digicredholdingsinc/did-graphql-client'
 
 const client = new DidGraphQLClient({
   capability: heldCapability,
@@ -97,7 +101,7 @@ On success, the client POSTs **only** to the canonical `invocationTarget`. Fetch
 A delegating peer sends `invocationTarget` with the capability; a client generally will not have a global host list. That is the intended path. `allowedHosts` is optional app policy. `expectedInvocationTarget` is a same-channel pin (a second copy of the target vs. the capability's own), not a pre-provisioned allowlist. Call without `allowedHosts`, keep the algorithm’s HTTPS / private-IP / same-URL rules, and treat `result.data` as untrusted JSON from that peer.
 
 ```ts
-import { validateGraphqlZcap } from '@digicred-holdings/did-graphql-client'
+import { validateGraphqlZcap } from '@digicredholdingsinc/did-graphql-client'
 
 validateGraphqlZcap(artifacts.zcap.graphql, {
   expectedInvocationTarget: template.catalog.zcap.graphql.invocationTarget,

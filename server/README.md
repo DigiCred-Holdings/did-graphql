@@ -1,4 +1,4 @@
-# @digicred-holdings/did-graphql-server
+# @digicredholdingsinc/did-graphql-server
 
 Resource-server ZCAP checks for a GraphQL API. It decodes `x-zcap-invocation`, enforces `allowedAction`, and verifies the chain and invocation **entirely in-process** — did:key + `eddsa-jcs-2022` Data Integrity proofs, no external agent call and no database read from inside this package. This package holds no signing keys of its own; the public key it verifies against comes straight from the presented `did:key` string. Signing the invocation is the invoking client's job, never this package's.
 
@@ -7,7 +7,7 @@ See the [repo README](../README.md) for how the pieces fit. This page is the ser
 ## Install
 
 ```bash
-npm install @digicred-holdings/did-graphql-server
+npm install @digicredholdingsinc/did-graphql-server
 ```
 
 Node-only. Depends on `graphql` (query parse / field-subset), `bs58` and `canonicalize` (did:key decoding, JCS canonicalization for `eddsa-jcs-2022`).
@@ -29,7 +29,7 @@ import {
   decodeInvocationHeader,
   checkAuthOnly,
   checkInvocation,
-} from '@digicred-holdings/did-graphql-server'
+} from '@digicredholdingsinc/did-graphql-server'
 
 // rootCapability is whatever YOUR lookup resolved for this request —
 // e.g. a `zcap_capabilities` row keyed by (controller, id, invocationTarget)
@@ -62,7 +62,7 @@ if (!gate.ok) {
 - **case** — raw IMS CASE 1.1 (`cfDocuments`, `cfPackage`, `cfItem`, …) under `Query.case`, gated by `checkInvocation`. Any opinionated shape over that vocabulary stays in the consuming server. Full field/query reference: [src/case/README.md](src/case/README.md).
 
 ```ts
-import { authModule, caseModule, composeModules, mergeResolvers, attachResolvers } from '@digicred-holdings/did-graphql-server'
+import { authModule, caseModule, composeModules, mergeResolvers, attachResolvers } from '@digicredholdingsinc/did-graphql-server'
 
 const composed = composeModules([authModule, caseModule()])
 const schema = buildSchema(`${myTypeDefs}\n${composed.sdl}`) // or splice queryFields into your Query
@@ -148,7 +148,7 @@ Inline fragments (`... on SomeType`) are walked, as an interface- or union-typed
 Close it with one call per request, before `graphql()`:
 
 ```ts
-import { checkIntrospection } from '@digicred-holdings/did-graphql-server'
+import { checkIntrospection } from '@digicredholdingsinc/did-graphql-server'
 
 const introspection = checkIntrospection(zcapConfig, payload, body.query)
 if (!introspection.ok) {
