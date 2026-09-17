@@ -84,8 +84,11 @@ export function encodeCapabilityInvocation(input: {
   capability: Capability
   invocation?: SignedInvocation
 }): string {
-  const params = [`capability="${capabilityParam(input.capability)}"`]
-  if (input.invocation) params.push(`invocation="${gzipToBase64Url(input.invocation)}"`)
+  // Bare values, matching the spec's examples
+  // (`capability={base64url(gzip(json(capability)))}`). Unpadded
+  // base64url contains no character that would need quoting.
+  const params = [`capability=${capabilityParam(input.capability)}`]
+  if (input.invocation) params.push(`invocation=${gzipToBase64Url(input.invocation)}`)
   return `zcap ${params.join(', ')}`
 }
 

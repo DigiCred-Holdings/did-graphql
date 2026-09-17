@@ -129,7 +129,7 @@ validateGraphqlZcap(artifacts.zcap.graphql, {
 
 ```
 content-type: application/json
-capability-invocation: zcap capability="<base64url(gzip(json))>", invocation="<base64url(gzip(json))>"
+capability-invocation: zcap capability=<base64url(gzip(json))>, invocation=<base64url(gzip(json))>
 ```
 
 Body: `{ query, variables?, operationName? }`.

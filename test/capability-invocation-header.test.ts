@@ -91,13 +91,36 @@ test('the capability survives byte-identically — signatures verify over what c
   assert.equal(JSON.stringify(decoded?.chain[0]), JSON.stringify(capability))
 })
 
-test('follows the ZCAP HTTP binding shape', () => {
+test('follows the ZCAP HTTP binding shape — bare value, as the spec examples show', () => {
   const header = encodeCapabilityInvocation({ capability: capabilityWith(['query A { a }']) })
-  const value = /^zcap capability="([^"]*)"$/.exec(header)?.[1]
-  assert.ok(value)
-  // base64url, unpadded: no +, / or = in the VALUE, so it never needs
-  // escaping inside the quoted parameter.
+  // `zcap capability={base64url(gzip(json(capability)))}` — no quotes.
+  const value = /^zcap capability=([^\s,"]+)$/.exec(header)?.[1]
+  assert.ok(value, `expected a bare value, got: ${header}`)
+  // base64url, unpadded: nothing that would need quoting.
   assert.doesNotMatch(value, /[+/=]/)
+})
+
+test('parses the spec syntax whether the value is bare or quoted', () => {
+  // A conformant sender has no reason to quote, so rejecting the bare
+  // form — as this did — rejects the spec's own examples. Both are
+  // accepted; only the bare form is emitted.
+  const capability = capabilityWith(['query A { a }'])
+  const bare = encodeCapabilityInvocation({ capability })
+  const quoted = bare.replace(/capability=([^\s,]+)/, 'capability="$1"')
+
+  assert.notEqual(bare, quoted, 'fixture should differ')
+  for (const header of [bare, quoted]) {
+    const payload = decodeInvocationHeader(header)
+    assert.ok(payload, `failed to parse: ${header.slice(0, 32)}...`)
+    assert.deepEqual(payload.chain[0]?.allowedAction, ['query A { a }'])
+  }
+})
+
+test('both parameters parse bare, alongside each other', () => {
+  const header = encodeCapabilityInvocation({ capability: capabilityWith(['query A { a }']), invocation })
+  assert.match(header, /^zcap capability=[^\s,"]+, invocation=[^\s,"]+$/)
+  const payload = decodeInvocationHeader(header)
+  assert.equal(payload?.invocation?.proof?.capabilityAction, 'query A { a }')
 })
 
 test('a realistic 9-query capability fits well under the 8KB host limit', () => {
@@ -194,7 +217,7 @@ test('maxHeaderBytes: 0 disables the ceiling', () => {
 test('prepared requests carry the new header and a JSON body', () => {
   const prepared = prepareDiagnosticRequest(capabilityWith(['query A { a }']), { query: 'query A { a }' })
   assert.equal(prepared.headers['content-type'], 'application/json')
-  assert.match(prepared.headers['capability-invocation'], /^zcap capability="/)
+  assert.match(prepared.headers['capability-invocation'], /^zcap capability=[^\s,"]+/)
   assert.equal(JSON.parse(prepared.body).query, 'query A { a }')
 })
 

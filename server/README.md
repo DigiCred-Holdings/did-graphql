@@ -188,6 +188,24 @@ fragment F on Query { __schema { types { name } } }
 
 `__typename` is not treated as introspection: it discloses only the type of something the caller already selected, the same reason `matchesAllowedAction` ignores it.
 
+## Conformance with the ZCAP spec
+
+The capability data model, the `Capability-Invocation` header encoding, root dereferencing, `allowedAction`, `caveat` and `capabilityChain` all follow [the spec](https://w3c-ccg.github.io/zcap-spec/v0.4.0-rc.5/). Three things deliberately do not, and it is better to state them than to let someone discover them.
+
+**The header value is emitted bare, and parsed either way.** The spec's examples show `capability={base64url(gzip(json(capability)))}` with no quotes; unpadded base64url contains nothing that needs quoting. Both forms are accepted on parse, since a sender may reasonably quote.
+
+**Invocation via HTTP trailers is not supported.** §Example 10 shows the same headers sent as trailers under chunked encoding. `decodeInvocationHeader` reads request headers, not trailers.
+
+**The invocation proof is not HTTP Signatures.** The spec signs the HTTP request itself via `Signature-Input`/`Signature`. This library sends an embedded `eddsa-jcs-2022` Data Integrity invocation instead, because that proof is byte-compatible with the signer on the issuing side and pinned by a cross-implementation fixture. Changing it would mean changing that signer, the wallet and the agent together. The practical difference is replay scope, which [Invocation freshness](#invocation-freshness) now bounds.
+
+**No `action` property.** This is *not* a divergence. §4.3 makes `action` optional — a target "MAY support the `action` property ... as one common behavioral direction technique" — and states that "targets are free to choose their own mechanisms for directing behavior". Authorizing by literal GraphQL document is such a mechanism.
+
+It would not fit even if it were required: `action` "points to a URI as a form of vocabulary" (`https://datastore.example/WriteFile`), so it names a coarse verb from a controlled vocabulary. A GraphQL document is neither a URI nor coarse, and a URI naming `Query` or `Mutation` would grant every query or every mutation — the opposite of per-document authorization. The delegated examples (§Example 9, 10) carry only `capability=`; the action is the request body, bound by `Content-Digest` and the signature.
+
+**Root zcaps cannot be invoked (`id=` form).** Only delegated capabilities are accepted. A root here is purely a trust anchor: it carries no proof, and the verifier resolves it rather than receiving it. Admin-style access is expected to use a delegated leaf per admin, which gives per-admin revocation and attribution that direct root invocation would not.
+
+**Multi-level delegation is refused, not partly checked.** `capabilityChain` longer than root → leaf is rejected outright rather than verified one link deep and trusted for the rest.
+
 ## Invocation freshness
 
 An invocation proof binds the `invocationTarget` and the exact query text, so a captured header cannot be pointed at another endpoint or reused for a different query. It did not bind **time**: the only deadline was the *capability's* `expires`, typically months out, which left a captured header replayable for its one query for that whole period.

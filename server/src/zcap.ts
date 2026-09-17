@@ -68,6 +68,11 @@ export interface RealZcapServerConfig {
    * Defaults to `DEFAULT_INVOCATION_CLOCK_SKEW_SECONDS` (60).
    */
   invocationClockSkewSeconds?: number
+  /**
+   * Accept capabilities carrying caveats this library cannot evaluate.
+   * Defaults to false — see `VerifyChainOptions.allowUnsupportedCaveats`.
+   */
+  allowUnsupportedCaveats?: boolean
 }
 
 export type ZcapServerConfig = UnsafeZcapServerConfig | RealZcapServerConfig
@@ -113,10 +118,13 @@ function gunzipJson(base64url: string): unknown {
  */
 function parseCapabilityInvocation(headerValue: string): InvocationHeaderPayload | null {
   const params = new Map<string, string>()
-  // Deliberately not a full RFC-8941 parser: the accepted grammar is
-  // exactly what this library emits, so anything else fails closed.
-  for (const match of headerValue.matchAll(/([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*"([^"]*)"/g)) {
-    params.set(match[1]!, match[2]!)
+  // Both quoted and bare values. The spec's own examples show the value
+  // bare (`capability={base64url(gzip(json(capability)))}`), and since
+  // base64url without padding contains no character needing a quoted
+  // string, a conformant sender has no reason to quote it. Accepting
+  // only the quoted form — as this did — rejects the spec's own syntax.
+  for (const match of headerValue.matchAll(/([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*(?:"([^"]*)"|([^\s,;"]+))/g)) {
+    params.set(match[1]!, match[2] ?? match[3] ?? '')
   }
 
   const capabilityParam = params.get('capability')
@@ -488,7 +496,9 @@ export function checkAuthOnly(config: ZcapServerConfig, payload: InvocationHeade
   const leaf = payload?.chain?.[0]
   if (!leaf) return presentZcap(undefined, false, 'missing capability')
 
-  const result = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget)
+  const result = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget, new Date(), {
+    allowUnsupportedCaveats: config.allowUnsupportedCaveats,
+  })
   if (!result.verified) {
     return presentZcap(leaf, false, result.errors.map((e) => e.detail).join('; '), result.errors)
   }
@@ -520,7 +530,9 @@ export function checkInvocation(
     return { ok: true }
   }
 
-  const chainResult = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget)
+  const chainResult = verifyChainLocally(leaf, config.rootCapability, config.expectedInvocationTarget, new Date(), {
+    allowUnsupportedCaveats: config.allowUnsupportedCaveats,
+  })
   if (!chainResult.verified) {
     return {
       ok: false,
