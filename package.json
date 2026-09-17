@@ -15,7 +15,7 @@
     "release": "npm run build && changeset publish"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.1",
+    "@changesets/cli": "^3.0.3",
     "@credo-ts/askar": "0.6.3",
     "@credo-ts/core": "0.6.3",
     "@credo-ts/node": "0.6.3",
