@@ -80,7 +80,7 @@ Concurrent requests for the same uncached package share one in-flight fetch, so 
 
 `resolveFrameworkPackageId` (used whenever `framework` is passed instead of `packageId`) has its own caches in `queries.ts`. `frameworkPackageIdCache` holds successful title→packageId resolutions, keyed by framework title, with the same 5-minute default TTL. Titles are resolved against a snapshot of `GET /CFDocuments?limit=1000`, one per server, shared by concurrent lookups and kept for 30 seconds from when it arrives. A fetch slower than that is still shared until it settles. An unknown title therefore costs no upstream request while the snapshot is fresh, however many a query sends. The 30 seconds is also how long a newly published framework can stay "not found".
 
-Every one of these caches is partitioned by server and credential (`baseUrl` plus an opaque per-`apiKey` id). Configs with different keys never share a cached or in-flight response, so a bad key can't be served what a good key fetched, and a good key can't inherit a bad key's 401.
+Every one of these caches is partitioned by server and credential (`baseUrl` and `apiKey`). Configs with different keys never share a cached or in-flight response, so a bad key can't be served what a good key fetched, and a good key can't inherit a bad key's 401.
 
 `clearCasePackageCache()` drops every cached package immediately; `clearFrameworkPackageIdCache()` drops every cached title→packageId resolution and listing snapshot. Tests call both between cases so a mutated mock response, or a re-registered framework title, doesn't leak into the next assertion.
 

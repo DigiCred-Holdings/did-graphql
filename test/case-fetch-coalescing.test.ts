@@ -183,3 +183,54 @@ test('a listing fetch slower than the TTL is still shared, and fresh once it lan
   assert.equal(await resolveFrameworkPackageId(config, 'Framework 3'), 'pkg-3')
   assert.equal(documents, 1)
 })
+
+// Each upstream call waits on its own gate, so a test controls the order responses land in.
+function gatedFetch(respond: (call: number) => unknown) {
+  const gates: Array<() => void> = []
+  let calls = 0
+  const fetchImpl = (async () => {
+    const call = calls++
+    await new Promise<void>((resolve) => (gates[call] = resolve))
+    return Response.json(respond(call))
+  }) as typeof fetch
+  const started = async (n: number) => {
+    while (calls < n) await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+  return { config: { baseUrl: 'https://case.example', fetchImpl } as CaseConfig, gates, started }
+}
+
+test('a listing fetch started before a clear does not overwrite the one after it', async () => {
+  const fresh = [...DOCUMENTS, { identifier: 'pkg-new', uri: '', title: 'Only In Fresh' }]
+  const { config, gates, started } = gatedFetch((call) => ({ CFDocuments: call === 0 ? DOCUMENTS : fresh }))
+
+  const stale = resolveFrameworkPackageId(config, 'Framework 0')
+  await started(1)
+  clearFrameworkPackageIdCache()
+  const current = resolveFrameworkPackageId(config, 'Framework 1')
+  await started(2)
+
+  gates[1]!() // post-clear fetch lands first
+  assert.equal(await current, 'pkg-1')
+  gates[0]!() // pre-clear fetch lands last
+  assert.equal(await stale, 'pkg-0')
+
+  assert.equal(await resolveFrameworkPackageId(config, 'Only In Fresh'), 'pkg-new')
+})
+
+test('a package fetch started before a clear does not overwrite the one after it', async () => {
+  const pkg = (version: string) => ({ CFDocument: { identifier: 'pkg-0', uri: '', title: version }, CFItems: [], CFAssociations: [] })
+  const { config, gates, started } = gatedFetch((call) => pkg(call === 0 ? 'old' : 'new'))
+
+  const stale = getCFPackage(config, 'pkg-0')
+  await started(1)
+  clearCasePackageCache()
+  const current = getCFPackage(config, 'pkg-0')
+  await started(2)
+
+  gates[1]!()
+  assert.equal((await current)?.CFDocument.title, 'new')
+  gates[0]!()
+  assert.equal((await stale)?.CFDocument.title, 'old')
+
+  assert.equal((await getCFPackage(config, 'pkg-0'))?.CFDocument.title, 'new')
+})

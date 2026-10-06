@@ -186,23 +186,17 @@ const packageInFlight = new Map<string, Promise<CFPackage | null>>()
  * entry share a response, so configs with different `apiKey`s on the
  * same server must not — otherwise a caller with a bad key could be
  * served what a good key fetched, or a good key inherit a bad key's
- * 401. Each distinct key gets an opaque id, so the secret itself
- * never appears in a cache key (or anything that might print one).
+ * 401. The key is used as-is rather than mapped to an id: the config
+ * already holds it, and an id registry would have to outlive every
+ * cache entry — growing without bound under rotating keys — whereas a
+ * key embedded in the entries goes away when they do.
  */
-const credentialIds = new Map<string, number>()
-
 export function caseCacheScope(config: CaseConfig): string {
-  let credential = ''
-  if (config.apiKey) {
-    let id = credentialIds.get(config.apiKey)
-    if (id === undefined) credentialIds.set(config.apiKey, (id = credentialIds.size + 1))
-    credential = String(id)
-  }
-  return `${config.baseUrl.replace(/\/$/, '')}#${credential}`
+  return JSON.stringify([config.baseUrl.replace(/\/$/, ''), config.apiKey ?? ''])
 }
 
 function packageCacheKey(config: CaseConfig, packageId: string): string {
-  return `${caseCacheScope(config)}::${packageId}`
+  return JSON.stringify([caseCacheScope(config), packageId])
 }
 
 export function clearCasePackageCache(): void {
@@ -255,7 +249,9 @@ async function fetchCFPackage(config: CaseConfig, packageId: string): Promise<CF
   const url = `${caseBaseUrl(config)}/CFPackages/${encodeURIComponent(packageId)}`
   const fetching = fetchJson<CFPackage>(url, config)
     .then((pkg) => {
-      if (pkg) cachePackage(config, key, pkg)
+      // Only if this is still the registered fetch: one started before
+      // clearCasePackageCache() mustn't overwrite what came after it.
+      if (pkg && packageInFlight.get(key) === fetching) cachePackage(config, key, pkg)
       return pkg
     })
     .finally(() => {

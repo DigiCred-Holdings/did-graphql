@@ -23,7 +23,7 @@ const frameworkPackageIdCache = new Map<string, { packageId: string; cachedAt: n
 // doesn't depend on what callers send. The TTL is short because it
 // also decides how long a newly published framework stays "not found".
 const FRAMEWORK_LISTING_TTL_MS = 30 * 1000
-const frameworkListingCache = new Map<string, { byTitle: Map<string, CFDocument[]>; fetchedAt: number }>()
+const frameworkListingCache = new Map<string, { byTitle: Map<string, CFDocument[]>; cachedAt: number }>()
 // Held apart from the snapshot so a fetch slower than the TTL is still
 // shared until it settles, and freshness counts from when it arrived.
 const frameworkListingInFlight = new Map<string, Promise<Map<string, CFDocument[]>>>()
@@ -34,10 +34,18 @@ export function clearFrameworkPackageIdCache(): void {
   frameworkListingInFlight.clear()
 }
 
+// Both maps are keyed per credential, so under rotating keys entries
+// for keys no longer in use would otherwise sit there indefinitely;
+// sweeping expired ones on insert bounds them to recently active keys.
+function pruneExpired(cache: Map<string, { cachedAt: number }>, ttlMs: number): void {
+  const now = Date.now()
+  for (const [key, entry] of cache) if (now - entry.cachedAt >= ttlMs) cache.delete(key)
+}
+
 function frameworksByTitle(config: CaseConfig): Promise<Map<string, CFDocument[]>> {
   const scope = caseCacheScope(config)
   const cached = frameworkListingCache.get(scope)
-  if (cached && Date.now() - cached.fetchedAt < FRAMEWORK_LISTING_TTL_MS) return Promise.resolve(cached.byTitle)
+  if (cached && Date.now() - cached.cachedAt < FRAMEWORK_LISTING_TTL_MS) return Promise.resolve(cached.byTitle)
 
   const pending = frameworkListingInFlight.get(scope)
   if (pending) return pending
@@ -46,7 +54,12 @@ function frameworksByTitle(config: CaseConfig): Promise<Map<string, CFDocument[]
     .then(({ documents }) => {
       const byTitle = new Map<string, CFDocument[]>()
       for (const d of documents) byTitle.set(d.title, [...(byTitle.get(d.title) ?? []), d])
-      frameworkListingCache.set(scope, { byTitle, fetchedAt: Date.now() })
+      // Only if this is still the registered fetch: one started before
+      // clearFrameworkPackageIdCache() mustn't overwrite what came after it.
+      if (frameworkListingInFlight.get(scope) === fetching) {
+        pruneExpired(frameworkListingCache, FRAMEWORK_LISTING_TTL_MS)
+        frameworkListingCache.set(scope, { byTitle, cachedAt: Date.now() })
+      }
       return byTitle
     })
     .finally(() => {
@@ -62,7 +75,7 @@ function frameworksByTitle(config: CaseConfig): Promise<Map<string, CFDocument[]
  * Titles are NOT unique — ambiguous matches throw with candidate ids.
  */
 export async function resolveFrameworkPackageId(config: CaseConfig, framework: string): Promise<string> {
-  const cacheKey = `${caseCacheScope(config)}::${framework}`
+  const cacheKey = JSON.stringify([caseCacheScope(config), framework])
   const cached = frameworkPackageIdCache.get(cacheKey)
   if (cached && Date.now() - cached.cachedAt < FRAMEWORK_PACKAGE_ID_TTL_MS) return cached.packageId
 
@@ -81,6 +94,7 @@ export async function resolveFrameworkPackageId(config: CaseConfig, framework: s
     )
   }
   const packageId = matches[0]!.identifier
+  pruneExpired(frameworkPackageIdCache, FRAMEWORK_PACKAGE_ID_TTL_MS)
   frameworkPackageIdCache.set(cacheKey, { packageId, cachedAt: Date.now() })
   return packageId
 }
