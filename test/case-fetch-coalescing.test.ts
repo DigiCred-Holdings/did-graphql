@@ -234,3 +234,69 @@ test('a package fetch started before a clear does not overwrite the one after it
 
   assert.equal((await getCFPackage(config, 'pkg-0'))?.CFDocument.title, 'new')
 })
+
+// The first upstream call never settles (and ignores its abort signal);
+// every later one answers normally.
+function stallFirst(respond: (url: string) => Response) {
+  let calls = 0
+  const fetchImpl = (async (input: string | URL | Request) => {
+    if (calls++ === 0) return new Promise<Response>(() => {})
+    return respond(String(input))
+  }) as typeof fetch
+  return { config: { baseUrl: 'https://case.example', fetchImpl, fetchTimeoutMs: 50 } as CaseConfig, calls: () => calls }
+}
+
+test('a stalled package fetch times out, and a later call succeeds', async () => {
+  const { config, calls } = stallFirst(() =>
+    Response.json({ CFDocument: { identifier: 'pkg-0', uri: '', title: 'pkg-0' }, CFItems: [], CFAssociations: [] }),
+  )
+  const results = await Promise.allSettled([getCFPackage(config, 'pkg-0'), getCFPackage(config, 'pkg-0')])
+  for (const r of results) assert.match(String(r.status === 'rejected' && r.reason), /timed out after 50ms/)
+  assert.equal(calls(), 1, 'both waited on the one shared fetch')
+
+  assert.equal((await getCFPackage(config, 'pkg-0'))?.CFDocument.identifier, 'pkg-0')
+  assert.equal(calls(), 2)
+})
+
+test('a stalled listing fetch times out, and a later lookup succeeds', async () => {
+  const { config } = stallFirst(() => Response.json({ CFDocuments: DOCUMENTS }))
+  await assert.rejects(resolveFrameworkPackageId(config, 'Framework 1'), /timed out/)
+  assert.equal(await resolveFrameworkPackageId(config, 'Framework 1'), 'pkg-1')
+})
+
+test('titles past the first 1000 frameworks resolve', async () => {
+  const all = Array.from({ length: 1500 }, (_, i) => ({ identifier: `pkg-${i}`, uri: '', title: `Framework ${i}` }))
+  let requests = 0
+  const config: CaseConfig = {
+    baseUrl: 'https://case.example',
+    fetchImpl: (async (input: string | URL | Request) => {
+      requests++
+      const params = new URL(String(input)).searchParams
+      const offset = Number(params.get('offset') ?? 0)
+      const limit = Number(params.get('limit') ?? all.length)
+      return Response.json({ CFDocuments: all.slice(offset, offset + limit) }, { headers: { 'x-total-count': String(all.length) } })
+    }) as typeof fetch,
+  }
+  assert.equal(await resolveFrameworkPackageId(config, 'Framework 1200'), 'pkg-1200')
+  assert.equal(requests, 2)
+})
+
+test('maxCachedPackages ignores values that would unbound or zero the cache', async () => {
+  const ids = Array.from({ length: 30 }, (_, i) => `pkg-${i}`)
+  for (const cap of [Number.NaN, Number.POSITIVE_INFINITY, 0, -5]) {
+    clearCasePackageCache()
+    const { config, calls } = countingConfig({ maxCachedPackages: cap })
+    for (const id of ids) await getCFPackage(config, id)
+    calls.packages = 0
+    for (const id of ids.slice(-12)) await getCFPackage(config, id)
+    await getCFPackage(config, ids[17]!) // 13th most recent: evicted under the default 12
+    assert.equal(calls.packages, 1, `maxCachedPackages: ${cap} should behave as the default 12`)
+  }
+
+  clearCasePackageCache()
+  const { config, calls } = countingConfig({ maxCachedPackages: 2.5 })
+  for (const id of ids.slice(0, 3)) await getCFPackage(config, id)
+  calls.packages = 0
+  await getCFPackage(config, ids[0]!)
+  assert.equal(calls.packages, 1, '2.5 rounds down to 2, so the oldest of three was evicted')
+})

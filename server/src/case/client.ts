@@ -25,13 +25,21 @@ export interface CaseConfig {
   ttlMs?: number
   /**
    * How many packages the in-memory cache holds before evicting the
-   * least recently used. Defaults to 12. Size it to the number of
+   * least recently used. Defaults to 12; anything that isn't a finite
+   * number >= 1 also means 12, and fractions round down. Size it to the number of
    * frameworks one request can touch, or a request spanning more
    * evicts its own packages and re-fetches them. The cache is shared
    * by every config in the process; the value in effect is the one
    * passed by whichever call stores a package.
    */
   maxCachedPackages?: number
+  /**
+   * How long one upstream request (response and body) may take before
+   * it's abandoned. Defaults to 60 seconds. Concurrent callers share a
+   * package or listing fetch, so a request that never settled would
+   * otherwise block every later caller for that resource until restart.
+   */
+  fetchTimeoutMs?: number
   /** Swap HTTP (tests). Defaults to global `fetch`. */
   fetchImpl?: typeof fetch
 }
@@ -151,13 +159,50 @@ function caseBaseUrl(config: CaseConfig): string {
 // the caller-supplied value of an ID variable. Without encoding, an id
 // containing "/" or "?" could redirect the request to a different
 // go-case path/query than the one this function name implies.
-async function fetchJson<T>(url: string, config: CaseConfig): Promise<T | null> {
-  const res = await http(config)(url, { headers: authHeaders(config) })
-  if (res.status === 404) return null
-  if (!res.ok) {
-    throw new Error(`go-case request failed: ${res.status} ${await res.text().catch(() => '')}`)
+const DEFAULT_FETCH_TIMEOUT_MS = 60 * 1000
+
+function positiveOr(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback
+}
+
+/**
+ * One upstream request, response and body together, under
+ * `CaseConfig.fetchTimeoutMs`. The timeout belongs to the request, not
+ * to any caller, so it holds however many callers share the result.
+ * It's raced rather than relying on the abort alone, so it settles
+ * even with a `fetchImpl` that ignores the signal.
+ */
+async function upstream<T>(config: CaseConfig, url: string, read: (res: Response) => Promise<T>): Promise<T> {
+  const timeoutMs = positiveOr(config.fetchTimeoutMs, DEFAULT_FETCH_TIMEOUT_MS)
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`go-case request timed out after ${timeoutMs}ms: ${url}`)
+      controller.abort(error)
+      reject(error)
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([
+      http(config)(url, { headers: authHeaders(config), signal: controller.signal }).then(read),
+      timedOut,
+    ])
+  } finally {
+    clearTimeout(timer)
   }
-  return (await res.json()) as T
+}
+
+async function failed(res: Response): Promise<never> {
+  throw new Error(`go-case request failed: ${res.status} ${await res.text().catch(() => '')}`)
+}
+
+async function fetchJson<T>(url: string, config: CaseConfig): Promise<T | null> {
+  return upstream(config, url, async (res) => {
+    if (res.status === 404) return null
+    if (!res.ok) return failed(res)
+    return (await res.json()) as T
+  })
 }
 
 // Bounded to a max entry count, not just a TTL — package sizes vary
@@ -231,7 +276,7 @@ export function isPackageCached(config: CaseConfig, packageId: string): boolean 
 function cachePackage(config: CaseConfig, key: string, pkg: CFPackage): void {
   packageCache.delete(key)
   packageCache.set(key, { package: pkg, fetchedAt: Date.now() })
-  while (packageCache.size > Math.max(1, config.maxCachedPackages ?? PACKAGE_CACHE_MAX_ENTRIES)) {
+  while (packageCache.size > positiveOr(config.maxCachedPackages, PACKAGE_CACHE_MAX_ENTRIES)) {
     const oldest = packageCache.keys().next().value
     if (oldest !== undefined) packageCache.delete(oldest)
   }
@@ -321,12 +366,11 @@ export async function getCFDocuments(
   const query = params.toString()
   const url = `${caseBaseUrl(config)}/CFDocuments${query ? `?${query}` : ''}`
 
-  const res = await http(config)(url, { headers: authHeaders(config) })
-  if (!res.ok) {
-    throw new Error(`go-case request failed: ${res.status} ${await res.text().catch(() => '')}`)
-  }
-  const body = (await res.json()) as { CFDocuments: CFDocument[] }
-  const totalCountHeader = res.headers.get('x-total-count')
-  const totalCount = totalCountHeader ? Number(totalCountHeader) : body.CFDocuments.length
-  return { documents: body.CFDocuments, totalCount }
+  return upstream(config, url, async (res) => {
+    if (!res.ok) return failed(res)
+    const body = (await res.json()) as { CFDocuments: CFDocument[] }
+    const totalCountHeader = res.headers.get('x-total-count')
+    const totalCount = totalCountHeader ? Number(totalCountHeader) : body.CFDocuments.length
+    return { documents: body.CFDocuments, totalCount }
+  })
 }

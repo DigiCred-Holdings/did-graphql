@@ -5,7 +5,7 @@ import { caseCacheScope, getCFDocuments, getCFPackage } from './client.js'
 
 // Every framework-scoped cfItems/cfItemTypes call that passes
 // `framework` instead of `packageId` used to re-fetch
-// GET /CFDocuments?limit=1000 fresh, every time, just to resolve a
+// the CFDocuments listing fresh, every time, just to resolve a
 // title it had almost certainly already resolved on the previous call
 // — titles don't change. Cached per (server + credential, framework title), same
 // TTL default as packageCache, since both are answering "what does
@@ -34,6 +34,23 @@ export function clearFrameworkPackageIdCache(): void {
   frameworkListingInFlight.clear()
 }
 
+// Every page, not just the first 1000: a title past the first page
+// would otherwise be "not found", and the snapshot would pin that answer.
+const LISTING_PAGE_SIZE = 1000
+
+async function listAllFrameworks(config: CaseConfig): Promise<CFDocument[]> {
+  // By identifier, so a server that ignored `offset` and repeated a page
+  // couldn't make every title on it look ambiguous.
+  const documents = new Map<string, CFDocument>()
+  for (let offset = 0; ; offset += LISTING_PAGE_SIZE) {
+    const page = await getCFDocuments(config, { limit: LISTING_PAGE_SIZE, offset })
+    for (const d of page.documents) documents.set(d.identifier, d)
+    if (page.documents.length < LISTING_PAGE_SIZE || offset + LISTING_PAGE_SIZE >= page.totalCount) {
+      return [...documents.values()]
+    }
+  }
+}
+
 // Both maps are keyed per credential, so under rotating keys entries
 // for keys no longer in use would otherwise sit there indefinitely;
 // sweeping expired ones on insert bounds them to recently active keys.
@@ -50,8 +67,8 @@ function frameworksByTitle(config: CaseConfig): Promise<Map<string, CFDocument[]
   const pending = frameworkListingInFlight.get(scope)
   if (pending) return pending
 
-  const fetching = getCFDocuments(config, { limit: 1000 })
-    .then(({ documents }) => {
+  const fetching = listAllFrameworks(config)
+    .then((documents) => {
       const byTitle = new Map<string, CFDocument[]>()
       for (const d of documents) byTitle.set(d.title, [...(byTitle.get(d.title) ?? []), d])
       // Only if this is still the registered fetch: one started before
