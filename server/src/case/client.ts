@@ -7,8 +7,6 @@
 // lookups), by contrast, are real per-resource go-case endpoints with
 // their own pagination/filtering — no equivalent caching needed there.
 
-import { createHash } from 'node:crypto'
-
 export interface CaseConfig {
   baseUrl: string
   /**
@@ -188,10 +186,18 @@ const packageInFlight = new Map<string, Promise<CFPackage | null>>()
  * entry share a response, so configs with different `apiKey`s on the
  * same server must not — otherwise a caller with a bad key could be
  * served what a good key fetched, or a good key inherit a bad key's
- * 401. The key is hashed so the raw secret isn't kept as a map key.
+ * 401. Each distinct key gets an opaque id, so the secret itself
+ * never appears in a cache key (or anything that might print one).
  */
+const credentialIds = new Map<string, number>()
+
 export function caseCacheScope(config: CaseConfig): string {
-  const credential = config.apiKey ? createHash('sha256').update(config.apiKey).digest('hex').slice(0, 32) : ''
+  let credential = ''
+  if (config.apiKey) {
+    let id = credentialIds.get(config.apiKey)
+    if (id === undefined) credentialIds.set(config.apiKey, (id = credentialIds.size + 1))
+    credential = String(id)
+  }
   return `${config.baseUrl.replace(/\/$/, '')}#${credential}`
 }
 
