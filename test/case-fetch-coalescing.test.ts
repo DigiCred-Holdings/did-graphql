@@ -3,9 +3,10 @@
 // - concurrent cold requests for one package share one fetch
 // - the package cache cap is configurable
 // - unknown framework titles don't each re-fetch the CFDocuments listing
+// - none of the above shares a response across apiKeys
 
 import assert from 'node:assert/strict'
-import { beforeEach, test } from 'node:test'
+import { beforeEach, mock, test } from 'node:test'
 
 import {
   type CaseConfig,
@@ -102,4 +103,83 @@ test('a failed listing fetch is not cached', async () => {
   await assert.rejects(resolveFrameworkPackageId(config, 'Framework 1'))
   assert.equal(await resolveFrameworkPackageId(config, 'Framework 1'), 'pkg-1')
   assert.equal(calls.documents, 1)
+})
+
+// Fronted by a key: only `Bearer good` reads anything.
+function keyedFetch() {
+  const calls = { packages: 0, documents: 0 }
+  const fetchImpl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url = String(input)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const auth = (init?.headers as Record<string, string> | undefined)?.authorization
+    if (auth !== 'Bearer good') return new Response('unauthorized', { status: 401 })
+    if (url.includes('/CFDocuments')) {
+      calls.documents++
+      return Response.json({ CFDocuments: DOCUMENTS })
+    }
+    calls.packages++
+    return Response.json({ CFDocument: { identifier: 'pkg-0', uri: '', title: 'pkg-0' }, CFItems: [], CFAssociations: [] })
+  }
+  const config = (apiKey: string): CaseConfig => ({
+    baseUrl: 'https://case.example',
+    apiKey,
+    fetchImpl: fetchImpl as typeof fetch,
+  })
+  return { good: config('good'), bad: config('bad'), calls }
+}
+
+test('package fetches and cache entries are not shared across apiKeys', async () => {
+  const { good, bad } = keyedFetch()
+
+  // Cold, concurrent, bad key first: neither inherits the other's outcome.
+  const [badResult, goodResult] = await Promise.allSettled([getCFPackage(bad, 'pkg-0'), getCFPackage(good, 'pkg-0')])
+  assert.equal(badResult.status, 'rejected')
+  assert.equal(goodResult.status, 'fulfilled')
+
+  // Warm: the good key's cached package isn't served to the bad key.
+  await assert.rejects(getCFPackage(bad, 'pkg-0'), /401/)
+})
+
+test('framework listings and title resolutions are not shared across apiKeys', async () => {
+  const { good, bad } = keyedFetch()
+
+  const [badResult, goodResult] = await Promise.allSettled([
+    resolveFrameworkPackageId(bad, 'Framework 2'),
+    resolveFrameworkPackageId(good, 'Framework 2'),
+  ])
+  assert.equal(badResult.status, 'rejected')
+  assert.equal(goodResult.status, 'fulfilled')
+
+  // Neither the resolved title nor the good key's listing reaches the bad key.
+  await assert.rejects(resolveFrameworkPackageId(bad, 'Framework 2'), /401/)
+  await assert.rejects(resolveFrameworkPackageId(bad, 'Framework 5'), /401/)
+})
+
+test('a listing fetch slower than the TTL is still shared, and fresh once it lands', async (t) => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  let documents = 0
+  const config: CaseConfig = {
+    baseUrl: 'https://case.example',
+    fetchImpl: (async () => {
+      documents++
+      await gate
+      return Response.json({ CFDocuments: DOCUMENTS })
+    }) as typeof fetch,
+  }
+
+  mock.timers.enable({ apis: ['Date'], now: 0 })
+  t.after(() => mock.timers.reset())
+
+  const first = resolveFrameworkPackageId(config, 'Framework 1')
+  mock.timers.tick(31_000) // past the 30s listing TTL, fetch still pending
+  const second = resolveFrameworkPackageId(config, 'Framework 2')
+  release()
+  assert.deepEqual(await Promise.all([first, second]), ['pkg-1', 'pkg-2'])
+  assert.equal(documents, 1, 'the second lookup joined the pending fetch')
+
+  // The freshness window starts on arrival, not when the fetch began.
+  mock.timers.tick(20_000)
+  assert.equal(await resolveFrameworkPackageId(config, 'Framework 3'), 'pkg-3')
+  assert.equal(documents, 1)
 })

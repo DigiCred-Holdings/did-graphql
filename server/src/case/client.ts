@@ -7,6 +7,8 @@
 // lookups), by contrast, are real per-resource go-case endpoints with
 // their own pagination/filtering — no equivalent caching needed there.
 
+import { createHash } from 'node:crypto'
+
 export interface CaseConfig {
   baseUrl: string
   /**
@@ -177,20 +179,36 @@ const packageCache = new Map<string, { package: CFPackage; fetchedAt: number }>(
 // One shared fetch per package while it's in flight. Without this,
 // N concurrent requests for the same cold package each fetch and parse
 // the whole thing (tens of MB) — N copies in memory at once, for one
-// result. Keyed by baseUrl too, since two configs can point the same
-// packageId at different servers.
+// result.
 const packageInFlight = new Map<string, Promise<CFPackage | null>>()
+
+/**
+ * What every CASE cache in this module is partitioned by: the server
+ * and the credential used to read it. Two configs sharing a cache
+ * entry share a response, so configs with different `apiKey`s on the
+ * same server must not — otherwise a caller with a bad key could be
+ * served what a good key fetched, or a good key inherit a bad key's
+ * 401. The key is hashed so the raw secret isn't kept as a map key.
+ */
+export function caseCacheScope(config: CaseConfig): string {
+  const credential = config.apiKey ? createHash('sha256').update(config.apiKey).digest('hex').slice(0, 32) : ''
+  return `${config.baseUrl.replace(/\/$/, '')}#${credential}`
+}
+
+function packageCacheKey(config: CaseConfig, packageId: string): string {
+  return `${caseCacheScope(config)}::${packageId}`
+}
 
 export function clearCasePackageCache(): void {
   packageCache.clear()
   packageInFlight.clear()
 }
 
-function getCachedPackage(packageId: string): { package: CFPackage; fetchedAt: number } | undefined {
-  const hit = packageCache.get(packageId)
+function getCachedPackage(key: string): { package: CFPackage; fetchedAt: number } | undefined {
+  const hit = packageCache.get(key)
   if (hit) {
-    packageCache.delete(packageId)
-    packageCache.set(packageId, hit)
+    packageCache.delete(key)
+    packageCache.set(key, hit)
   }
   return hit
 }
@@ -206,13 +224,13 @@ function getCachedPackage(packageId: string): { package: CFPackage; fetchedAt: n
  */
 export function isPackageCached(config: CaseConfig, packageId: string): boolean {
   const ttl = config.ttlMs ?? 5 * 60 * 1000
-  const hit = packageCache.get(packageId)
+  const hit = packageCache.get(packageCacheKey(config, packageId))
   return !!hit && Date.now() - hit.fetchedAt < ttl
 }
 
-function cachePackage(config: CaseConfig, packageId: string, pkg: CFPackage): void {
-  packageCache.delete(packageId)
-  packageCache.set(packageId, { package: pkg, fetchedAt: Date.now() })
+function cachePackage(config: CaseConfig, key: string, pkg: CFPackage): void {
+  packageCache.delete(key)
+  packageCache.set(key, { package: pkg, fetchedAt: Date.now() })
   while (packageCache.size > Math.max(1, config.maxCachedPackages ?? PACKAGE_CACHE_MAX_ENTRIES)) {
     const oldest = packageCache.keys().next().value
     if (oldest !== undefined) packageCache.delete(oldest)
@@ -221,24 +239,25 @@ function cachePackage(config: CaseConfig, packageId: string, pkg: CFPackage): vo
 
 async function fetchCFPackage(config: CaseConfig, packageId: string): Promise<CFPackage | null> {
   const ttl = config.ttlMs ?? 5 * 60 * 1000
-  const cached = getCachedPackage(packageId)
+  const key = packageCacheKey(config, packageId)
+  const cached = getCachedPackage(key)
   if (cached && Date.now() - cached.fetchedAt < ttl) return cached.package
 
-  const url = `${caseBaseUrl(config)}/CFPackages/${encodeURIComponent(packageId)}`
-  const pending = packageInFlight.get(url)
+  const pending = packageInFlight.get(key)
   if (pending) return pending
 
+  const url = `${caseBaseUrl(config)}/CFPackages/${encodeURIComponent(packageId)}`
   const fetching = fetchJson<CFPackage>(url, config)
     .then((pkg) => {
-      if (pkg) cachePackage(config, packageId, pkg)
+      if (pkg) cachePackage(config, key, pkg)
       return pkg
     })
     .finally(() => {
       // A failure is shared by everyone already waiting, but not
       // remembered — the next request retries.
-      if (packageInFlight.get(url) === fetching) packageInFlight.delete(url)
+      if (packageInFlight.get(key) === fetching) packageInFlight.delete(key)
     })
-  packageInFlight.set(url, fetching)
+  packageInFlight.set(key, fetching)
   return fetching
 }
 

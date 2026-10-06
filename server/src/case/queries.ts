@@ -1,13 +1,13 @@
 import { GraphQLError } from 'graphql'
 
 import type { CaseConfig, CFAssociation, CFDocument, CFItem } from './client.js'
-import { getCFDocuments, getCFPackage } from './client.js'
+import { caseCacheScope, getCFDocuments, getCFPackage } from './client.js'
 
 // Every framework-scoped cfItems/cfItemTypes call that passes
 // `framework` instead of `packageId` used to re-fetch
 // GET /CFDocuments?limit=1000 fresh, every time, just to resolve a
 // title it had almost certainly already resolved on the previous call
-// — titles don't change. Cached per (baseUrl, framework title), same
+// — titles don't change. Cached per (server + credential, framework title), same
 // TTL default as packageCache, since both are answering "what does
 // this server currently say," not permanent facts.
 const FRAMEWORK_PACKAGE_ID_TTL_MS = 5 * 60 * 1000
@@ -23,32 +23,38 @@ const frameworkPackageIdCache = new Map<string, { packageId: string; cachedAt: n
 // doesn't depend on what callers send. The TTL is short because it
 // also decides how long a newly published framework stays "not found".
 const FRAMEWORK_LISTING_TTL_MS = 30 * 1000
-const frameworkListingCache = new Map<
-  string,
-  { byTitle: Promise<Map<string, CFDocument[]>>; fetchedAt: number }
->()
+const frameworkListingCache = new Map<string, { byTitle: Map<string, CFDocument[]>; fetchedAt: number }>()
+// Held apart from the snapshot so a fetch slower than the TTL is still
+// shared until it settles, and freshness counts from when it arrived.
+const frameworkListingInFlight = new Map<string, Promise<Map<string, CFDocument[]>>>()
 
 export function clearFrameworkPackageIdCache(): void {
   frameworkPackageIdCache.clear()
   frameworkListingCache.clear()
+  frameworkListingInFlight.clear()
 }
 
 function frameworksByTitle(config: CaseConfig): Promise<Map<string, CFDocument[]>> {
-  const cached = frameworkListingCache.get(config.baseUrl)
-  if (cached && Date.now() - cached.fetchedAt < FRAMEWORK_LISTING_TTL_MS) return cached.byTitle
+  const scope = caseCacheScope(config)
+  const cached = frameworkListingCache.get(scope)
+  if (cached && Date.now() - cached.fetchedAt < FRAMEWORK_LISTING_TTL_MS) return Promise.resolve(cached.byTitle)
 
-  const byTitle = getCFDocuments(config, { limit: 1000 }).then(({ documents }) => {
-    const map = new Map<string, CFDocument[]>()
-    for (const d of documents) map.set(d.title, [...(map.get(d.title) ?? []), d])
-    return map
-  })
-  const entry = { byTitle, fetchedAt: Date.now() }
-  frameworkListingCache.set(config.baseUrl, entry)
-  // Don't keep a failed fetch around for the TTL — the next lookup retries.
-  byTitle.catch(() => {
-    if (frameworkListingCache.get(config.baseUrl) === entry) frameworkListingCache.delete(config.baseUrl)
-  })
-  return byTitle
+  const pending = frameworkListingInFlight.get(scope)
+  if (pending) return pending
+
+  const fetching = getCFDocuments(config, { limit: 1000 })
+    .then(({ documents }) => {
+      const byTitle = new Map<string, CFDocument[]>()
+      for (const d of documents) byTitle.set(d.title, [...(byTitle.get(d.title) ?? []), d])
+      frameworkListingCache.set(scope, { byTitle, fetchedAt: Date.now() })
+      return byTitle
+    })
+    .finally(() => {
+      // As with packages: a failure is shared, not remembered.
+      if (frameworkListingInFlight.get(scope) === fetching) frameworkListingInFlight.delete(scope)
+    })
+  frameworkListingInFlight.set(scope, fetching)
+  return fetching
 }
 
 /**
@@ -56,7 +62,7 @@ function frameworksByTitle(config: CaseConfig): Promise<Map<string, CFDocument[]
  * Titles are NOT unique — ambiguous matches throw with candidate ids.
  */
 export async function resolveFrameworkPackageId(config: CaseConfig, framework: string): Promise<string> {
-  const cacheKey = `${config.baseUrl}::${framework}`
+  const cacheKey = `${caseCacheScope(config)}::${framework}`
   const cached = frameworkPackageIdCache.get(cacheKey)
   if (cached && Date.now() - cached.cachedAt < FRAMEWORK_PACKAGE_ID_TTL_MS) return cached.packageId
 
