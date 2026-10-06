@@ -23,6 +23,15 @@ export interface CaseConfig {
   apiKey?: string
   /** How long to keep a fetched package before re-fetching. Defaults to 5 minutes. */
   ttlMs?: number
+  /**
+   * How many packages the in-memory cache holds before evicting the
+   * least recently used. Defaults to 12. Size it to the number of
+   * frameworks one request can touch, or a request spanning more
+   * evicts its own packages and re-fetches them. The cache is shared
+   * by every config in the process; the value in effect is the one
+   * passed by whichever call stores a package.
+   */
+  maxCachedPackages?: number
   /** Swap HTTP (tests). Defaults to global `fetch`. */
   fetchImpl?: typeof fetch
 }
@@ -165,8 +174,16 @@ async function fetchJson<T>(url: string, config: CaseConfig): Promise<T | null> 
 const PACKAGE_CACHE_MAX_ENTRIES = 12
 const packageCache = new Map<string, { package: CFPackage; fetchedAt: number }>()
 
+// One shared fetch per package while it's in flight. Without this,
+// N concurrent requests for the same cold package each fetch and parse
+// the whole thing (tens of MB) — N copies in memory at once, for one
+// result. Keyed by baseUrl too, since two configs can point the same
+// packageId at different servers.
+const packageInFlight = new Map<string, Promise<CFPackage | null>>()
+
 export function clearCasePackageCache(): void {
   packageCache.clear()
+  packageInFlight.clear()
 }
 
 function getCachedPackage(packageId: string): { package: CFPackage; fetchedAt: number } | undefined {
@@ -193,10 +210,10 @@ export function isPackageCached(config: CaseConfig, packageId: string): boolean 
   return !!hit && Date.now() - hit.fetchedAt < ttl
 }
 
-function cachePackage(packageId: string, pkg: CFPackage): void {
+function cachePackage(config: CaseConfig, packageId: string, pkg: CFPackage): void {
   packageCache.delete(packageId)
   packageCache.set(packageId, { package: pkg, fetchedAt: Date.now() })
-  if (packageCache.size > PACKAGE_CACHE_MAX_ENTRIES) {
+  while (packageCache.size > Math.max(1, config.maxCachedPackages ?? PACKAGE_CACHE_MAX_ENTRIES)) {
     const oldest = packageCache.keys().next().value
     if (oldest !== undefined) packageCache.delete(oldest)
   }
@@ -207,9 +224,22 @@ async function fetchCFPackage(config: CaseConfig, packageId: string): Promise<CF
   const cached = getCachedPackage(packageId)
   if (cached && Date.now() - cached.fetchedAt < ttl) return cached.package
 
-  const pkg = await fetchJson<CFPackage>(`${caseBaseUrl(config)}/CFPackages/${encodeURIComponent(packageId)}`, config)
-  if (pkg) cachePackage(packageId, pkg)
-  return pkg
+  const url = `${caseBaseUrl(config)}/CFPackages/${encodeURIComponent(packageId)}`
+  const pending = packageInFlight.get(url)
+  if (pending) return pending
+
+  const fetching = fetchJson<CFPackage>(url, config)
+    .then((pkg) => {
+      if (pkg) cachePackage(config, packageId, pkg)
+      return pkg
+    })
+    .finally(() => {
+      // A failure is shared by everyone already waiting, but not
+      // remembered — the next request retries.
+      if (packageInFlight.get(url) === fetching) packageInFlight.delete(url)
+    })
+  packageInFlight.set(url, fetching)
+  return fetching
 }
 
 /** The default package this config names (`CaseConfig.packageId`). Throws if unset or not found on the server. */

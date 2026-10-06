@@ -1,6 +1,6 @@
 import { GraphQLError } from 'graphql'
 
-import type { CaseConfig, CFAssociation, CFItem } from './client.js'
+import type { CaseConfig, CFAssociation, CFDocument, CFItem } from './client.js'
 import { getCFDocuments, getCFPackage } from './client.js'
 
 // Every framework-scoped cfItems/cfItemTypes call that passes
@@ -13,8 +13,42 @@ import { getCFDocuments, getCFPackage } from './client.js'
 const FRAMEWORK_PACKAGE_ID_TTL_MS = 5 * 60 * 1000
 const frameworkPackageIdCache = new Map<string, { packageId: string; cachedAt: number }>()
 
+// The CFDocuments listing a title is resolved against, shared by every
+// lookup on the same server. Only successes go into
+// frameworkPackageIdCache, so without this every unknown title (and
+// every concurrent lookup of a known one) fetched the listing again:
+// thousands of bogus titles in one query meant thousands of upstream
+// requests. A snapshot answers both known and unknown titles. It's
+// one entry per server, so unlike a per-title negative cache its size
+// doesn't depend on what callers send. The TTL is short because it
+// also decides how long a newly published framework stays "not found".
+const FRAMEWORK_LISTING_TTL_MS = 30 * 1000
+const frameworkListingCache = new Map<
+  string,
+  { byTitle: Promise<Map<string, CFDocument[]>>; fetchedAt: number }
+>()
+
 export function clearFrameworkPackageIdCache(): void {
   frameworkPackageIdCache.clear()
+  frameworkListingCache.clear()
+}
+
+function frameworksByTitle(config: CaseConfig): Promise<Map<string, CFDocument[]>> {
+  const cached = frameworkListingCache.get(config.baseUrl)
+  if (cached && Date.now() - cached.fetchedAt < FRAMEWORK_LISTING_TTL_MS) return cached.byTitle
+
+  const byTitle = getCFDocuments(config, { limit: 1000 }).then(({ documents }) => {
+    const map = new Map<string, CFDocument[]>()
+    for (const d of documents) map.set(d.title, [...(map.get(d.title) ?? []), d])
+    return map
+  })
+  const entry = { byTitle, fetchedAt: Date.now() }
+  frameworkListingCache.set(config.baseUrl, entry)
+  // Don't keep a failed fetch around for the TTL — the next lookup retries.
+  byTitle.catch(() => {
+    if (frameworkListingCache.get(config.baseUrl) === entry) frameworkListingCache.delete(config.baseUrl)
+  })
+  return byTitle
 }
 
 /**
@@ -26,8 +60,7 @@ export async function resolveFrameworkPackageId(config: CaseConfig, framework: s
   const cached = frameworkPackageIdCache.get(cacheKey)
   if (cached && Date.now() - cached.cachedAt < FRAMEWORK_PACKAGE_ID_TTL_MS) return cached.packageId
 
-  const { documents } = await getCFDocuments(config, { limit: 1000 })
-  const matches = documents.filter((d) => d.title === framework)
+  const matches = (await frameworksByTitle(config)).get(framework) ?? []
 
   if (matches.length === 0) {
     throw new GraphQLError(`no CASE framework found with title "${framework}" — see cfDocuments for the real titles`, {
