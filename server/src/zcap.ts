@@ -354,9 +354,10 @@ function collectFieldNames(selectionSet: SelectionSetNode | undefined, out: Set<
 }
 
 /**
- * Parses `query` into root-field-name -> the flattened set of every
- * field selected anywhere under it. Returns null if the query can't
- * be parsed, has no operation, or hits something collectFieldNames
+ * Parses `query` into one entry per operation, each mapping
+ * root-field-name -> the flattened set of every field selected
+ * anywhere under it. Returns null if the document can't be parsed,
+ * has no operation, or any operation hits something collectFieldNames
  * doesn't support — never partial results, so a caller can't
  * accidentally authorize against an incomplete picture.
  */
@@ -366,16 +367,24 @@ interface ParsedOperation {
   fields: Map<string, Set<string>>
 }
 
-function fieldsByRootField(query: string): ParsedOperation | null {
+function parseOperations(query: string): ParsedOperation[] | null {
   let doc: DocumentNode
   try {
     doc = parse(query)
   } catch {
     return null
   }
-  const op = doc.definitions.find((d): d is OperationDefinitionNode => d.kind === 'OperationDefinition')
-  if (!op) return null
+  const operations: ParsedOperation[] = []
+  for (const definition of doc.definitions) {
+    if (definition.kind !== 'OperationDefinition') continue
+    const parsed = parseOperation(definition)
+    if (!parsed) return null
+    operations.push(parsed)
+  }
+  return operations.length ? operations : null
+}
 
+function parseOperation(op: OperationDefinitionNode): ParsedOperation | null {
   const map = new Map<string, Set<string>>()
   for (const selection of op.selectionSet.selections) {
     if (selection.kind !== 'Field') return null
@@ -390,19 +399,13 @@ function fieldsByRootField(query: string): ParsedOperation | null {
 }
 
 /**
- * True if every root field `queryFields` asks about is also present
- * in `entry` (same real field name — aliases don't count), and every
- * field requested under it is within what `entry` itself requests
- * under that same root field. `entry` failing to parse (e.g. it's not
- * actually a GraphQL document) just means it doesn't match — not an
- * error, since allowedAction can hold ordinary exact-match strings
- * that happen not to parse as a full query on their own only in
- * degenerate/malformed cases, which should fail closed either way.
+ * True if `parsedQuery` is the same operation type as `parsedEntry`,
+ * every root field it asks about is also present in the entry (same
+ * real field name — aliases don't count), and every field requested
+ * under it is within what the entry itself requests under that same
+ * root field.
  */
-function isFieldSubsetOfEntry(parsedQuery: ParsedOperation, entry: string): boolean {
-  const parsedEntry = fieldsByRootField(entry)
-  if (!parsedEntry) return false
-
+function isFieldSubsetOfEntry(parsedQuery: ParsedOperation, parsedEntry: ParsedOperation): boolean {
   // Operation type first. Field names alone are NOT sufficient: a
   // schema may expose the same name on Query and Mutation, so matching
   // on fields only would let a capability granting
@@ -428,14 +431,26 @@ function isFieldSubsetOfEntry(parsedQuery: ParsedOperation, entry: string): bool
  * registered), falling back to the field-subset check above for
  * anything that isn't byte-identical but might still be a legitimate
  * narrower selection of an already-allowed query.
+ *
+ * EVERY operation in the document must be allowed, not just one. A
+ * GraphQL document may hold several operations and the host picks
+ * which to execute by `operationName` — which this check never sees,
+ * and which the embedded invocation proof doesn't sign. Checking only
+ * the first operation let `query A {...} query B {...}` with
+ * `operationName: "B"` run B under a capability granting only A.
+ * Requiring all of them makes the choice of `operationName`
+ * irrelevant: whichever one runs was granted.
  */
 function matchesAllowedAction(allowedAction: string[] | undefined, rawQueryText: string): boolean {
   const normalized = normalizeQuery(rawQueryText)
   if ((allowedAction ?? []).some((entry) => normalizeQuery(entry) === normalized)) return true
 
-  const parsedQuery = fieldsByRootField(rawQueryText)
-  if (!parsedQuery) return false
-  return (allowedAction ?? []).some((entry) => isFieldSubsetOfEntry(parsedQuery, entry))
+  const requested = parseOperations(rawQueryText)
+  if (!requested) return false
+  // An entry that doesn't parse (e.g. isn't actually a GraphQL
+  // document) just grants nothing via the subset path.
+  const granted = (allowedAction ?? []).flatMap((entry) => parseOperations(entry) ?? [])
+  return requested.every((op) => granted.some((entry) => isFieldSubsetOfEntry(op, entry)))
 }
 
 // --- unsafeMode structural fallback ---
