@@ -34,21 +34,37 @@ export function clearFrameworkPackageIdCache(): void {
   frameworkListingInFlight.clear()
 }
 
-// Every page, not just the first 1000: a title past the first page
+// Every page, not just the first one: a title past the first page
 // would otherwise be "not found", and the snapshot would pin that answer.
+// Asks for 1000 at a time, but a server may cap the page size (the CASE
+// spec allows it), so it advances by what each page actually returned.
 const LISTING_PAGE_SIZE = 1000
+// Hard stop on requests per listing, so a server that ignores `offset`
+// or never runs out of pages can't be polled forever.
+const MAX_LISTING_PAGES = 200
 
 async function listAllFrameworks(config: CaseConfig): Promise<CFDocument[]> {
   // By identifier, so a server that ignored `offset` and repeated a page
   // couldn't make every title on it look ambiguous.
   const documents = new Map<string, CFDocument>()
-  for (let offset = 0; ; offset += LISTING_PAGE_SIZE) {
+  let offset = 0
+  for (let pages = 0; pages < MAX_LISTING_PAGES; pages++) {
     const page = await getCFDocuments(config, { limit: LISTING_PAGE_SIZE, offset })
+    if (page.documents.length === 0) return [...documents.values()]
+    const before = documents.size
     for (const d of page.documents) documents.set(d.identifier, d)
-    if (page.documents.length < LISTING_PAGE_SIZE || offset + LISTING_PAGE_SIZE >= page.totalCount) {
+    if (documents.size === before) {
+      // Nothing new: the server is ignoring `offset` (or repeating itself).
+      console.warn(`[did-graphql] CFDocuments listing at ${config.baseUrl} repeated a page at offset ${offset}; using the ${documents.size} frameworks seen so far`)
       return [...documents.values()]
     }
+    offset += page.documents.length
+    // Only a total the server actually stated ends paging early; without
+    // one, keep going until an empty page (one extra request).
+    if (page.totalCountKnown && offset >= page.totalCount) return [...documents.values()]
   }
+  console.warn(`[did-graphql] CFDocuments listing at ${config.baseUrl} stopped after ${MAX_LISTING_PAGES} pages; titles beyond the first ${documents.size} frameworks won't resolve`)
+  return [...documents.values()]
 }
 
 // Both maps are keyed per credential, so under rotating keys entries

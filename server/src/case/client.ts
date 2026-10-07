@@ -34,10 +34,14 @@ export interface CaseConfig {
    */
   maxCachedPackages?: number
   /**
-   * How long one upstream request (response and body) may take before
-   * it's abandoned. Defaults to 60 seconds. Concurrent callers share a
-   * package or listing fetch, so a request that never settled would
-   * otherwise block every later caller for that resource until restart.
+   * How long one upstream request may take before it's abandoned:
+   * a total deadline covering the response AND the body read, applied
+   * to each request separately (so to each page of the framework
+   * listing). Defaults to 60 seconds; values above 2^31-1 ms are clamped
+   * to that (setTimeout's maximum). Concurrent callers share a package
+   * or listing fetch, so a request that never settled would otherwise
+   * block every later caller for that resource until restart. Raise it
+   * if your largest package can take longer than this to download.
    */
   fetchTimeoutMs?: number
   /** Swap HTTP (tests). Defaults to global `fetch`. */
@@ -160,6 +164,8 @@ function caseBaseUrl(config: CaseConfig): string {
 // containing "/" or "?" could redirect the request to a different
 // go-case path/query than the one this function name implies.
 const DEFAULT_FETCH_TIMEOUT_MS = 60 * 1000
+/** setTimeout's ceiling: anything larger fires after ~1 ms instead of waiting. */
+const MAX_TIMER_MS = 2 ** 31 - 1
 
 function positiveOr(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback
@@ -173,7 +179,7 @@ function positiveOr(value: number | undefined, fallback: number): number {
  * even with a `fetchImpl` that ignores the signal.
  */
 async function upstream<T>(config: CaseConfig, url: string, read: (res: Response) => Promise<T>): Promise<T> {
-  const timeoutMs = positiveOr(config.fetchTimeoutMs, DEFAULT_FETCH_TIMEOUT_MS)
+  const timeoutMs = Math.min(positiveOr(config.fetchTimeoutMs, DEFAULT_FETCH_TIMEOUT_MS), MAX_TIMER_MS)
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   const timedOut = new Promise<never>((_, reject) => {
@@ -359,7 +365,7 @@ export async function getCFItemFromCachedPackage(
 export async function getCFDocuments(
   config: CaseConfig,
   opts: { limit?: number; offset?: number } = {},
-): Promise<{ documents: CFDocument[]; totalCount: number }> {
+): Promise<{ documents: CFDocument[]; totalCount: number; totalCountKnown: boolean }> {
   const params = new URLSearchParams()
   if (opts.limit != null) params.set('limit', String(opts.limit))
   if (opts.offset != null) params.set('offset', String(opts.offset))
@@ -370,7 +376,10 @@ export async function getCFDocuments(
     if (!res.ok) return failed(res)
     const body = (await res.json()) as { CFDocuments: CFDocument[] }
     const totalCountHeader = res.headers.get('x-total-count')
-    const totalCount = totalCountHeader ? Number(totalCountHeader) : body.CFDocuments.length
-    return { documents: body.CFDocuments, totalCount }
+    const headerTotal = totalCountHeader === null || totalCountHeader.trim() === '' ? Number.NaN : Number(totalCountHeader)
+    // A missing, non-numeric or negative header means the server didn't say.
+    const totalCountKnown = Number.isFinite(headerTotal) && headerTotal >= 0
+    const totalCount = totalCountKnown ? headerTotal : body.CFDocuments.length
+    return { documents: body.CFDocuments, totalCount, totalCountKnown }
   })
 }

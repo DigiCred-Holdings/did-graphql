@@ -35,7 +35,8 @@ function countingConfig(overrides: Partial<CaseConfig> = {}) {
     }
     if (url.includes('/CFDocuments')) {
       calls.documents++
-      return Response.json({ CFDocuments: DOCUMENTS })
+      // Like go-case: the total in X-Total-Count.
+      return Response.json({ CFDocuments: DOCUMENTS }, { headers: { 'x-total-count': String(DOCUMENTS.length) } })
     }
     const match = url.match(/\/CFPackages\/(.+)$/)
     if (match) {
@@ -115,7 +116,8 @@ function keyedFetch() {
     if (auth !== 'Bearer good') return new Response('unauthorized', { status: 401 })
     if (url.includes('/CFDocuments')) {
       calls.documents++
-      return Response.json({ CFDocuments: DOCUMENTS })
+      // Like go-case: the total in X-Total-Count.
+      return Response.json({ CFDocuments: DOCUMENTS }, { headers: { 'x-total-count': String(DOCUMENTS.length) } })
     }
     calls.packages++
     return Response.json({ CFDocument: { identifier: 'pkg-0', uri: '', title: 'pkg-0' }, CFItems: [], CFAssociations: [] })
@@ -164,7 +166,7 @@ test('a listing fetch slower than the TTL is still shared, and fresh once it lan
     fetchImpl: (async () => {
       documents++
       await gate
-      return Response.json({ CFDocuments: DOCUMENTS })
+      return Response.json({ CFDocuments: DOCUMENTS }, { headers: { 'x-total-count': String(DOCUMENTS.length) } })
     }) as typeof fetch,
   }
 
@@ -191,7 +193,9 @@ function gatedFetch(respond: (call: number) => unknown) {
   const fetchImpl = (async () => {
     const call = calls++
     await new Promise<void>((resolve) => (gates[call] = resolve))
-    return Response.json(respond(call))
+    const body = respond(call) as { CFDocuments?: unknown[] }
+    const headers: Record<string, string> = body.CFDocuments ? { 'x-total-count': String(body.CFDocuments.length) } : {}
+    return Response.json(body, { headers })
   }) as typeof fetch
   const started = async (n: number) => {
     while (calls < n) await new Promise((resolve) => setTimeout(resolve, 1))
@@ -259,7 +263,7 @@ test('a stalled package fetch times out, and a later call succeeds', async () =>
 })
 
 test('a stalled listing fetch times out, and a later lookup succeeds', async () => {
-  const { config } = stallFirst(() => Response.json({ CFDocuments: DOCUMENTS }))
+  const { config } = stallFirst(() => Response.json({ CFDocuments: DOCUMENTS }, { headers: { 'x-total-count': String(DOCUMENTS.length) } }))
   await assert.rejects(resolveFrameworkPackageId(config, 'Framework 1'), /timed out/)
   assert.equal(await resolveFrameworkPackageId(config, 'Framework 1'), 'pkg-1')
 })
@@ -299,4 +303,99 @@ test('maxCachedPackages ignores values that would unbound or zero the cache', as
   calls.packages = 0
   await getCFPackage(config, ids[0]!)
   assert.equal(calls.packages, 1, '2.5 rounds down to 2, so the oldest of three was evicted')
+})
+
+/** A CFDocuments server over `all` that caps the page size and controls the X-Total-Count header. */
+function listingServer(all: { identifier: string; uri: string; title: string }[], opts: { cap?: number; total?: string | null; ignoreOffset?: boolean } = {}) {
+  let requests = 0
+  const config: CaseConfig = {
+    baseUrl: 'https://case.example',
+    fetchImpl: (async (input: string | URL | Request) => {
+      requests++
+      const params = new URL(String(input)).searchParams
+      const offset = opts.ignoreOffset ? 0 : Number(params.get('offset') ?? 0)
+      const limit = Math.min(Number(params.get('limit') ?? all.length), opts.cap ?? Number.POSITIVE_INFINITY)
+      const headers: Record<string, string> = {}
+      const total = opts.total === undefined ? String(all.length) : opts.total
+      if (total !== null) headers['x-total-count'] = total
+      return Response.json({ CFDocuments: all.slice(offset, offset + limit) }, { headers })
+    }) as typeof fetch,
+  }
+  return { config, requests: () => requests }
+}
+const frameworks = (n: number) => Array.from({ length: n }, (_, i) => ({ identifier: `pkg-${i}`, uri: '', title: `t${i}` }))
+
+test('a server that caps the page size below 1000 is paged through (N1)', async () => {
+  const { config, requests } = listingServer(frameworks(250), { cap: 100 })
+  assert.equal(await resolveFrameworkPackageId(config, 't240'), 'pkg-240')
+  assert.equal(requests(), 3, '100 + 100 + 50, stopping at the stated total')
+})
+
+test('without X-Total-Count, paging continues past a full page until an empty one', async () => {
+  const { config, requests } = listingServer(frameworks(1500), { total: null })
+  assert.equal(await resolveFrameworkPackageId(config, 't1499'), 'pkg-1499')
+  assert.equal(requests(), 3, '1000 + 500, then an empty page ends it')
+})
+
+test('a capped server without X-Total-Count is paged through too', async () => {
+  const { config, requests } = listingServer(frameworks(19), { cap: 5, total: null })
+  assert.equal(await resolveFrameworkPackageId(config, 't18'), 'pkg-18')
+  assert.equal(requests(), 5, '5 + 5 + 5 + 4, then an empty page')
+})
+
+test('a non-numeric or negative X-Total-Count is treated as unknown', async () => {
+  for (const total of ['abc', '-5', '']) {
+    clearFrameworkPackageIdCache()
+    const { config } = listingServer(frameworks(30), { cap: 10, total })
+    assert.equal(await resolveFrameworkPackageId(config, 't29'), 'pkg-29', `X-Total-Count: ${JSON.stringify(total)}`)
+  }
+})
+
+test('a server that ignores offset is not polled forever', async () => {
+  const warn = mock.method(console, 'warn', () => {})
+  try {
+    const { config, requests } = listingServer(frameworks(50), { cap: 10, total: 'abc', ignoreOffset: true })
+    await assert.rejects(() => resolveFrameworkPackageId(config, 't45'), /FRAMEWORK_NOT_FOUND|no CASE framework/)
+    assert.equal(requests(), 2, 'the second page added nothing new, so paging stopped')
+    assert.equal(warn.mock.callCount(), 1)
+  } finally {
+    warn.mock.restore()
+  }
+})
+
+test('a server that never runs out of pages stops at the page cap', async () => {
+  const warn = mock.method(console, 'warn', () => {})
+  let requests = 0
+  const config: CaseConfig = {
+    baseUrl: 'https://case.example',
+    fetchImpl: (async (input: string | URL | Request) => {
+      requests++
+      const offset = Number(new URL(String(input)).searchParams.get('offset') ?? 0)
+      // Always one fresh document, never an end, no total.
+      return Response.json({ CFDocuments: [{ identifier: `gen-${offset}`, uri: '', title: `gen ${offset}` }] })
+    }) as typeof fetch,
+  }
+  try {
+    await assert.rejects(() => resolveFrameworkPackageId(config, 'never'))
+    assert.equal(requests, 200)
+    assert.equal(warn.mock.callCount(), 1)
+  } finally {
+    warn.mock.restore()
+  }
+})
+
+test('fetchTimeoutMs above setTimeout\'s maximum is clamped, not an instant timeout', async () => {
+  for (const fetchTimeoutMs of [2 ** 31, 1e10]) {
+    clearCasePackageCache()
+    const config: CaseConfig = {
+      baseUrl: 'https://case.example',
+      fetchTimeoutMs,
+      fetchImpl: (async () => {
+        await new Promise((r) => setTimeout(r, 20))
+        return Response.json({ CFDocument: { identifier: 'p', uri: '', title: 'P' }, CFItems: [], CFAssociations: [] })
+      }) as typeof fetch,
+    }
+    const pkg = await getCFPackage(config, 'p')
+    assert.ok(pkg, `fetchTimeoutMs: ${fetchTimeoutMs}`)
+  }
 })
