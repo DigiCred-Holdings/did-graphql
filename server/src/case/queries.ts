@@ -1,20 +1,106 @@
 import { GraphQLError } from 'graphql'
 
-import type { CaseConfig, CFAssociation, CFItem } from './client.js'
-import { getCFDocuments, getCFPackage } from './client.js'
+import type { CaseConfig, CFAssociation, CFDocument, CFItem } from './client.js'
+import { caseCacheScope, getCFDocuments, getCFPackage } from './client.js'
 
 // Every framework-scoped cfItems/cfItemTypes call that passes
 // `framework` instead of `packageId` used to re-fetch
-// GET /CFDocuments?limit=1000 fresh, every time, just to resolve a
+// the CFDocuments listing fresh, every time, just to resolve a
 // title it had almost certainly already resolved on the previous call
-// — titles don't change. Cached per (baseUrl, framework title), same
+// — titles don't change. Cached per (server + credential, framework title), same
 // TTL default as packageCache, since both are answering "what does
 // this server currently say," not permanent facts.
 const FRAMEWORK_PACKAGE_ID_TTL_MS = 5 * 60 * 1000
 const frameworkPackageIdCache = new Map<string, { packageId: string; cachedAt: number }>()
 
+// The CFDocuments listing a title is resolved against, shared by every
+// lookup on the same server. Only successes go into
+// frameworkPackageIdCache, so without this every unknown title (and
+// every concurrent lookup of a known one) fetched the listing again:
+// thousands of bogus titles in one query meant thousands of upstream
+// requests. A snapshot answers both known and unknown titles. It's
+// one entry per server, so unlike a per-title negative cache its size
+// doesn't depend on what callers send. The TTL is short because it
+// also decides how long a newly published framework stays "not found".
+const FRAMEWORK_LISTING_TTL_MS = 30 * 1000
+const frameworkListingCache = new Map<string, { byTitle: Map<string, CFDocument[]>; cachedAt: number }>()
+// Held apart from the snapshot so a fetch slower than the TTL is still
+// shared until it settles, and freshness counts from when it arrived.
+const frameworkListingInFlight = new Map<string, Promise<Map<string, CFDocument[]>>>()
+
 export function clearFrameworkPackageIdCache(): void {
   frameworkPackageIdCache.clear()
+  frameworkListingCache.clear()
+  frameworkListingInFlight.clear()
+}
+
+// Every page, not just the first one: a title past the first page
+// would otherwise be "not found", and the snapshot would pin that answer.
+// Asks for 1000 at a time, but a server may cap the page size (the CASE
+// spec allows it), so it advances by what each page actually returned.
+const LISTING_PAGE_SIZE = 1000
+// Hard stop on requests per listing, so a server that ignores `offset`
+// or never runs out of pages can't be polled forever.
+const MAX_LISTING_PAGES = 200
+
+async function listAllFrameworks(config: CaseConfig): Promise<CFDocument[]> {
+  // By identifier, so a server that ignored `offset` and repeated a page
+  // couldn't make every title on it look ambiguous.
+  const documents = new Map<string, CFDocument>()
+  let offset = 0
+  for (let pages = 0; pages < MAX_LISTING_PAGES; pages++) {
+    const page = await getCFDocuments(config, { limit: LISTING_PAGE_SIZE, offset })
+    if (page.documents.length === 0) return [...documents.values()]
+    const before = documents.size
+    for (const d of page.documents) documents.set(d.identifier, d)
+    if (documents.size === before) {
+      // Nothing new: the server is ignoring `offset` (or repeating itself).
+      console.warn(`[did-graphql] CFDocuments listing at ${config.baseUrl} repeated a page at offset ${offset}; using the ${documents.size} frameworks seen so far`)
+      return [...documents.values()]
+    }
+    offset += page.documents.length
+    // Only a total the server actually stated ends paging early; without
+    // one, keep going until an empty page (one extra request).
+    if (page.totalCountKnown && offset >= page.totalCount) return [...documents.values()]
+  }
+  console.warn(`[did-graphql] CFDocuments listing at ${config.baseUrl} stopped after ${MAX_LISTING_PAGES} pages; titles beyond the first ${documents.size} frameworks won't resolve`)
+  return [...documents.values()]
+}
+
+// Both maps are keyed per credential, so under rotating keys entries
+// for keys no longer in use would otherwise sit there indefinitely;
+// sweeping expired ones on insert bounds them to recently active keys.
+function pruneExpired(cache: Map<string, { cachedAt: number }>, ttlMs: number): void {
+  const now = Date.now()
+  for (const [key, entry] of cache) if (now - entry.cachedAt >= ttlMs) cache.delete(key)
+}
+
+function frameworksByTitle(config: CaseConfig): Promise<Map<string, CFDocument[]>> {
+  const scope = caseCacheScope(config)
+  const cached = frameworkListingCache.get(scope)
+  if (cached && Date.now() - cached.cachedAt < FRAMEWORK_LISTING_TTL_MS) return Promise.resolve(cached.byTitle)
+
+  const pending = frameworkListingInFlight.get(scope)
+  if (pending) return pending
+
+  const fetching = listAllFrameworks(config)
+    .then((documents) => {
+      const byTitle = new Map<string, CFDocument[]>()
+      for (const d of documents) byTitle.set(d.title, [...(byTitle.get(d.title) ?? []), d])
+      // Only if this is still the registered fetch: one started before
+      // clearFrameworkPackageIdCache() mustn't overwrite what came after it.
+      if (frameworkListingInFlight.get(scope) === fetching) {
+        pruneExpired(frameworkListingCache, FRAMEWORK_LISTING_TTL_MS)
+        frameworkListingCache.set(scope, { byTitle, cachedAt: Date.now() })
+      }
+      return byTitle
+    })
+    .finally(() => {
+      // As with packages: a failure is shared, not remembered.
+      if (frameworkListingInFlight.get(scope) === fetching) frameworkListingInFlight.delete(scope)
+    })
+  frameworkListingInFlight.set(scope, fetching)
+  return fetching
 }
 
 /**
@@ -22,12 +108,11 @@ export function clearFrameworkPackageIdCache(): void {
  * Titles are NOT unique — ambiguous matches throw with candidate ids.
  */
 export async function resolveFrameworkPackageId(config: CaseConfig, framework: string): Promise<string> {
-  const cacheKey = `${config.baseUrl}::${framework}`
+  const cacheKey = JSON.stringify([caseCacheScope(config), framework])
   const cached = frameworkPackageIdCache.get(cacheKey)
   if (cached && Date.now() - cached.cachedAt < FRAMEWORK_PACKAGE_ID_TTL_MS) return cached.packageId
 
-  const { documents } = await getCFDocuments(config, { limit: 1000 })
-  const matches = documents.filter((d) => d.title === framework)
+  const matches = (await frameworksByTitle(config)).get(framework) ?? []
 
   if (matches.length === 0) {
     throw new GraphQLError(`no CASE framework found with title "${framework}" — see cfDocuments for the real titles`, {
@@ -42,6 +127,7 @@ export async function resolveFrameworkPackageId(config: CaseConfig, framework: s
     )
   }
   const packageId = matches[0]!.identifier
+  pruneExpired(frameworkPackageIdCache, FRAMEWORK_PACKAGE_ID_TTL_MS)
   frameworkPackageIdCache.set(cacheKey, { packageId, cachedAt: Date.now() })
   return packageId
 }
