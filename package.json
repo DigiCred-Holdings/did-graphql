@@ -19,9 +19,9 @@
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
-    "@credo-ts/askar": "0.7.0",
-    "@credo-ts/core": "0.7.0",
-    "@credo-ts/node": "0.7.0",
+    "@credo-ts/askar": "0.7.2",
+    "@credo-ts/core": "0.7.2",
+    "@credo-ts/node": "0.7.2",
     "@openwallet-foundation/askar-nodejs": "^0.6.0",
     "@openwallet-foundation/askar-shared": "^0.6.0",
     "@types/node": "^24.0.0",
